@@ -6,6 +6,7 @@ import tensorflow as tf
 import yfinance as yf
 import matplotlib.pyplot as plt
 from collections import deque
+import sys
 
 class AI_Trader():
     def __init__(self, state_size, action_space=3, model_name="AITrader"):
@@ -69,6 +70,25 @@ class AI_Trader():
         self.model.fit(states, target, epochs=1, verbose=0)
         if self.epsilon > self.epsilon_final:
             self.epsilon *= self.epsilon_decay
+    
+    def save_model(self, name):
+        """Guarda el modelo y el valor actual de epsilon"""
+        self.model.save(f"{name}.h5")
+        with open(f"{name}_epsilon.txt", "w") as f:
+            f.write(str(self.epsilon))
+        print(f"Modelo guardado como {name}.h5 y epsilon como {name}_epsilon.txt")
+        
+    def load_model(self, name):
+        """Carga un modelo guardado y su valor de epsilon"""
+        self.model = tf.keras.models.load_model(f"{name}.h5", compile=False)
+        # Recompilar el modelo para evitar problemas de serialización
+        self.model.compile(loss='mse', optimizer=tf.keras.optimizers.Adam(learning_rate=0.001))
+        try:
+            with open(f"{name}_epsilon.txt", "r") as f:
+                self.epsilon = float(f.read())
+            print(f"Modelo cargado desde {name}.h5 y epsilon = {self.epsilon}")
+        except FileNotFoundError:
+            print(f"Archivo epsilon no encontrado, manteniendo epsilon = {self.epsilon}")
 
 def sigmoid(x):
     return 1 / (1 + math.exp(-x))
@@ -98,61 +118,79 @@ def dataset_loader(stock_name, desde, hasta, intervalo):
     dataset = yf.download(stock_name, desde, hasta, interval=intervalo)
     return dataset['Close']
 
-# Parámetros
-stock_name = "AAPL"
-desde = "2020-01-01"
-hasta = "2024-01-24"
-intervalo = "1d"
-data = dataset_loader(stock_name, desde, hasta, intervalo)
+def main():
+    # Parámetros
+    stock_name = "AAPL"
+    desde = "2020-01-01"
+    hasta = "2024-01-24"
+    intervalo = "1d"
+    data = dataset_loader(stock_name, desde, hasta, intervalo)
 
-# El estado tendrá tamaño window_size - 1 porque calculamos diferencias
-window_size = 11  # Aumentamos en 1 para seguir teniendo 10 elementos en el estado
-state_size = window_size - 1
-episodes = 1000
-batch_size = 32
-data_samples = len(data) - 1
+    # El estado tendrá tamaño window_size - 1 porque calculamos diferencias
+    window_size = 11  # Aumentamos en 1 para seguir teniendo 10 elementos en el estado
+    state_size = window_size - 1
+    episodes = 11
+    batch_size = 32
+    data_samples = len(data) - 1
 
-trader = AI_Trader(state_size)
+    # Configuración para cargar modelo existente
+    cargar_modelo = False  # Cambiar a False para empezar con un modelo nuevo
+    modelo_existente = "ai_trader_10"  # Nombre del modelo a cargar (sin extensión)
 
-# Precalcular todos los estados
-states = [state_creator(data, t, window_size) for t in range(data_samples)]
+    trader = AI_Trader(state_size)
+    
+    # Cargar modelo existente si se especifica
+    if cargar_modelo:
+        try:
+            trader.load_model(modelo_existente)
+            print("Modelo cargado exitosamente")
+        except Exception as e:
+            print(f"  Error al cargar el modelo {modelo_existente}: {str(e)}")
+            print("Deteniendo la ejecución...")
+            sys.exit(1)
 
-for episode in range(1, episodes + 1):
-    print("Episodio: {}/{}".format(episode, episodes))
+    # Precalcular todos los estados
+    states = [state_creator(data, t, window_size) for t in range(data_samples)]
 
-    state = states[0]
-    total_profit = 0
-    trader.inventory = []
+    for episode in range(1, episodes + 1):
+        print("Episodio: {}/{}".format(episode, episodes))
 
-    for t in range(data_samples):
-        action = trader.trade(state)
-        next_state = states[t + 1] if t + 1 < data_samples else state  # Ensure we don't go out of bounds
-        reward = 0
-        current_price = data.iloc[t].item()
+        state = states[0]
+        total_profit = 0
+        trader.inventory = []
 
-        if action == 1:  # Comprar
-            trader.inventory.append(current_price)
-            print("AI Trader compró: ", stocks_price_format(current_price))
+        for t in range(data_samples):
+            action = trader.trade(state)
+            next_state = states[t + 1] if t + 1 < data_samples else state  # Ensure we don't go out of bounds
+            reward = 0
+            current_price = data.iloc[t].item()
 
-        elif action == 2 and len(trader.inventory) > 0:  # Vender
-            buy_price = trader.inventory.pop(0)
-            reward = max(current_price - buy_price, 0)
-            total_profit += current_price - buy_price
-            print("AI Trader vendió: ", stocks_price_format(current_price),
-                  " Beneficio: " + stocks_price_format(current_price - buy_price))
+            if action == 1:  # Comprar
+                trader.inventory.append(current_price)
+                print("episodio: ",episode,"AI Trader compró: ", stocks_price_format(current_price))
 
-        done = (t == data_samples - 1)
-        trader.memory.append((state, action, reward, next_state, done))
-        state = next_state
+            elif action == 2 and len(trader.inventory) > 0:  # Vender
+                buy_price = trader.inventory.pop(0)
+                reward = max(current_price - buy_price, 0)
+                total_profit += current_price - buy_price
+                print("AI Trader vendió: ", stocks_price_format(current_price),
+                    " Beneficio: " + stocks_price_format(current_price - buy_price))
 
-        if done:
-            print("########################")
-            print("BENEFICIO TOTAL: {}".format(stocks_price_format(total_profit)))
-            print("########################")
+            done = (t == data_samples - 1)
+            trader.memory.append((state, action, reward, next_state, done))
+            state = next_state
 
-    if len(trader.memory) > batch_size:
-        trader.batch_train(batch_size)
+            if done:
+                print("########################")
+                print("BENEFICIO TOTAL: {}".format(stocks_price_format(total_profit)))
+                print("########################")
 
-    # Guardar el modelo cada 10 episodios para no sobrecargar el proceso
-    if episode % 10 == 0:
-        trader.model.save("ai_trader_{}.h5".format(episode))
+        if len(trader.memory) > batch_size:
+            trader.batch_train(batch_size)
+
+        # Guardar el modelo cada 10 episodios para no sobrecargar el proceso
+        if episode % 10 == 0:
+            trader.save_model(f"ai_trader_{episode}")
+
+if __name__ == "__main__":
+    main()
