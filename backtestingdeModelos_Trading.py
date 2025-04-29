@@ -342,7 +342,7 @@ def plot_backtest_results(data, buy_points, sell_points, balance_history, model_
 
 def main():
     # Parámetros del backtesting
-    model_name = "ai_trader_25_4h"  # Nombre del modelo guardado (sin extensión)
+    model_name = "ai_trader_dueling_dqn_40_4h_target"  # Nombre del modelo guardado (sin extensión)
     symbol = "EURUSD"               # Símbolo a testear
     desde = "2024-01-01"           # Fecha de inicio para el backtesting
     hasta = "2025-01-01"           # Fecha de fin para el backtesting
