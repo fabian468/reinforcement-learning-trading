@@ -216,10 +216,10 @@ class AI_Trader():
                                 self.commission_per_trade = float(value)
                 print(f"Modelo cargado desde {name}.h5 con epsilon = {self.epsilon} y parámetros de sobreajuste.")
             else:
-                print(f"Archivo de parámetros no encontrado, manteniendo valores por defecto para epsilon y sobreajuste.")
+                print("Archivo de parámetros no encontrado, manteniendo valores por defecto para epsilon y sobreajuste.")
         except Exception as e:
             print(f"Error al cargar modelo: {e}")
-            print(f"Manteniendo valores por defecto para epsilon y sobreajuste.")
+            print("Manteniendo valores por defecto para epsilon y sobreajuste.")
 
     def plot_training_evolution(self):
         """Grafica la evolución del entrenamiento, garantizando que todas las listas tengan la misma longitud."""
