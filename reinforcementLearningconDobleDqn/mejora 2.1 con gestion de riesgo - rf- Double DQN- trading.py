@@ -63,7 +63,7 @@ class AI_Trader():
         self.gamma = 0.95
         self.epsilon = 1.0
         self.epsilon_final = 0.01
-        self.epsilon_decay = 0.999
+        self.epsilon_decay = 0.9999
 
         self.use_double_dqn = True
         self.target_model_update = 100
