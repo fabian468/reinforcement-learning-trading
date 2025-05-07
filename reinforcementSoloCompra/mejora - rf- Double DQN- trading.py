@@ -52,7 +52,7 @@ class AI_Trader():
                  action_space=3, 
                  model_name="AITrader" ,
                  random_market_event_probability = 0.01,
-                 spread= 0.01 , 
+                 spread= 0.20 , 
                  commission_per_trade= 0.07,
                  gamma = 0.95,
                  epsilon = 1.0,
@@ -119,7 +119,6 @@ class AI_Trader():
 
     def trade(self, state):
         if random.random() <= self.epsilon:
-            print(self.epsilon)
             return random.randrange(self.action_space)
            
         actions = self.model.predict(state, verbose=0)
@@ -368,16 +367,24 @@ def dataset_loader_mt5(symbol, desde, hasta, timeframe):
 
 def dataset_loader_csv(csv_path):
     try:
-        df = pd.read_csv(csv_path, index_col='time', parse_dates=True)
+        df = pd.read_csv(csv_path, sep='\t')  # Usa tabulador como separador
+        df.columns = [col.strip('<>').lower() for col in df.columns]  # Limpia < > y normaliza a mayúsculas
+        df['datetime'] = pd.to_datetime(df['date'] + ' ' + df['time'])  # Combina fecha y hora
+        df.set_index('datetime', inplace=True)
+        
+        if 'tickvol' in df.columns:
+           df.rename(columns={'tickvol': 'tick_volume'}, inplace=True)
+
         print(f"Datos cargados desde: {csv_path}")
-        if 'tick_volume' in df.columns and 'close' in df.columns:
-            return df[['close', 'tick_volume']]
+
+        if 'close' in df.columns and 'tick_volume' in df.columns:
+            return df[['time','close', 'tick_volume']]
         elif 'close' in df.columns:
-            print("Advertencia: La columna 'tick_volume' no se encontró en el CSV. Se utilizarán datos sin volumen.")
-            df['tick_volume'] = 0  # Puedes inicializar el volumen con 0 si no está presente
-            return df[['close', 'tick_volume']]
+            print("Advertencia: La columna 'TICKVOL' no se encontró en el CSV. Se utilizarán datos sin volumen.")
+            df['tickvol'] = 0
+            return df[['close', 'tickvol']]
         else:
-            print("Error: El archivo CSV debe contener al menos la columna 'close'.")
+            print("Error: El archivo CSV debe contener al menos la columna 'CLOSE'.")
             return None
     except FileNotFoundError:
         print(f"Error: No se encontró el archivo en la ruta: {csv_path}")
@@ -385,6 +392,7 @@ def dataset_loader_csv(csv_path):
     except Exception as e:
         print(f"Error al leer el archivo CSV: {e}")
         return None
+
 
 def plot_trading_session(data, buy_points, sell_points, symbol, timeframe, save_path='resultados_cv'):
     plt.figure(figsize=(14, 7))
@@ -418,20 +426,30 @@ def calculate_sharpe_ratio(returns, risk_free_rate=0.0):
 #comienzo del codigo
 def main():
     # Parámetros del activo financiero
-    symbol = "EURUSD"
+    cargar_csv = True
+    nombre_csv = "gold.csv"
+    
+    
+    symbol = "GOLD"
     desde = "2018-01-01"
     hasta = "2024-01-01"
-    intervalo = "4h"
+    intervalo = "1h"
+    
+    
     es_indice = False
+    es_forex = False
+    es_metal = True
     tick_value = 5  
     pip_multiplier = 10000  # Para el Nasdaq (2 decimales)
     
-    episodes = 2 #int(input("Numeros de episodios:"))
+    
+    episodes = 5 #int(input("Numeros de episodios:"))
     batch_size = 64
-    epsilon_decay = 0.9
+    epsilon_decay = 0.999
     learning_rate = 0.0001
     window_size = 18
     estados_vectorizados = True
+
 
     balance_first = 1000 # dinero inicial
     lot_size = 0.01   
@@ -445,16 +463,22 @@ def main():
     pip_value_eur_usd = 10 * lot_size
     
     # Inicialización de mt5
-    if not initialize_mt5():
-        print("No se pudo inicializar MetaTrader 5. Finalizando.")
-        sys.exit(1)
+    if not cargar_csv:
+        if not initialize_mt5():
+            print("No se pudo inicializar MetaTrader 5. Finalizando.")
+            sys.exit(1)        
+          
 
     # Creación de carpeta para guardar los resultados
     resultados_dir = 'resultados_cv'
     os.makedirs(resultados_dir, exist_ok=True)
 
     # Carga de datos desde el mt5
-    data = dataset_loader_mt5(symbol, desde, hasta, intervalo)
+    if not cargar_csv:
+        data = dataset_loader_mt5(symbol, desde, hasta, intervalo)
+    else:
+        data = dataset_loader_csv(nombre_csv)
+        
     if data is None or len(data) < 2 * window_size:
         print("No hay suficientes datos.")
         mt5.shutdown()
@@ -464,6 +488,9 @@ def main():
     train_size = int(len(data) * (1 - test_size_ratio))
     train_data = data.iloc[:train_size].copy()
     test_data = data.iloc[train_size:].copy()
+    
+    hora = data['time']
+    
 
     state_size = (window_size - 1) * 2 + window_size + window_size
 
@@ -575,10 +602,32 @@ def main():
                         profit_pips = (sell_price - original_buy_price) 
                         ticks = profit_pips / 0.25   
                         profit_dollars = ticks * tick_value * (lot_size / 1.0)
-                    else:
+                    elif(es_forex):
                         profit_pips = (sell_price - original_buy_price) * pip_multiplier
                         # Calcula la ganancia/pérdida en dólares
                         profit_dollars = profit_pips * pip_value_eur_usd
+                    elif(es_metal):
+                        profit_pips = (sell_price - original_buy_price) 
+                        # Calcula la ganancia/pérdida en dólares
+                        profit_dollars = profit_pips * pip_value_eur_usd
+                
+                elif int(hora[t].split(":")[0]) == 23 and len(trader.inventory) > 0:
+                    # Toma el precio que compro el activo
+                    original_buy_price = trader.inventory.pop(0)
+                    # Calcula el profit que obtuvo de la venta de activo (en pips)
+                    if(es_indice):
+                        profit_pips = (sell_price - original_buy_price) 
+                        ticks = profit_pips / 0.25   
+                        profit_dollars = ticks * tick_value * (lot_size / 1.0)
+                    elif(es_forex):
+                        profit_pips = (sell_price - original_buy_price) * pip_multiplier
+                        # Calcula la ganancia/pérdida en dólares
+                        profit_dollars = profit_pips * pip_value_eur_usd
+                    elif(es_metal):
+                        profit_pips = (sell_price - original_buy_price) 
+                        # Calcula la ganancia/pérdida en dólares
+                        profit_dollars = profit_pips * pip_value_eur_usd
+    # vender forzadamente por cierre de jornada, por ejemplo
                         
                     # La recompensa es el profit ya sea positivo o negativo (en la unidad de precio)
                     reward = profit_pips
@@ -593,6 +642,7 @@ def main():
                         # Calcula cuanto dinero tiene (considerando el lote)
                         current_equity += profit_dollars * (1 - trader.commission_per_trade) # Asumiendo indices es la base
                     else:
+                
                         current_equity += profit_dollars  * (1 - trader.commission_per_trade) # Asumiendo EUR es la base
                         
                     # Agrega el retorno al retorno del episodio cada profit (en pips)
@@ -609,7 +659,7 @@ def main():
                 
                     # Puedes imprimir o guardar la ganancia en dólares si lo deseas
                    #print("")
-                    print(f"Venta a {sell_price:.5f}, Compra a {original_buy_price:.5f}, Profit (pips): {profit_pips:.2f}, Profit (USD): {profit_dollars:.2f}, total de dinero actual {current_equity}")
+                    print(f"episodio: {episode} , Venta a {sell_price:.5f}, Compra a {original_buy_price:.5f}, Profit (pips): {profit_pips:.2f}, Profit (USD): {profit_dollars:.2f}, total de dinero actual {current_equity}")
            
                 # Seguimos en el bucle de episodes
                 # Si el dinero actual es mayor al que empezo se actualiza peak_equity despues del episodio
