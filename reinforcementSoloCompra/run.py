@@ -11,9 +11,6 @@ import pandas as pd
 import tensorflow as tf
 import matplotlib.pyplot as plt
 from collections import deque
-import sys
-import MetaTrader5 as mt5
-from datetime import datetime
 from dotenv import load_dotenv
 import os
 from sklearn.preprocessing import MinMaxScaler
@@ -55,8 +52,8 @@ class AI_Trader():
                  spread= 0.20 , 
                  commission_per_trade= 0.07,
                  gamma = 0.95,
-                 epsilon = 1.0,
-                 epsilon_final = 0.01,
+                 epsilon = 0.9,
+                 epsilon_final = 0.1,
                  epsilon_decay = 0.9999,
                  use_double_dqn = True,
                  target_model_update = 100,
@@ -100,21 +97,43 @@ class AI_Trader():
 
     def model_builder(self):
         input_layer = tf.keras.layers.Input(shape=(self.state_size,))
-        x = tf.keras.layers.Dense(28, activation='relu')(input_layer)
-        x = tf.keras.layers.Dense(28, activation='relu')(x)  # Capa adicional
-        x = tf.keras.layers.Dense(64, activation='relu')(x)
-       #
+        
+        # Capa densa con Batch Normalization
+        x = tf.keras.layers.Dense(28)(input_layer)
+        x = tf.keras.layers.BatchNormalization()(x)  # Batch Normalization
+        x = tf.keras.layers.ReLU()(x)  # Activación ReLU
     
-        value_stream = tf.keras.layers.Dense(64, activation='relu')(x)
+        # Capa adicional
+        x = tf.keras.layers.Dense(28)(x)
+        x = tf.keras.layers.BatchNormalization()(x)  # Batch Normalization
+        x = tf.keras.layers.ReLU()(x)  # Activación ReLU
+    
+        # Otra capa densa con Batch Normalization
+        x = tf.keras.layers.Dense(64)(x)
+        x = tf.keras.layers.BatchNormalization()(x)  # Batch Normalization
+        x = tf.keras.layers.ReLU()(x)  # Activación ReLU
+        
+        # Valor (value stream)
+        value_stream = tf.keras.layers.Dense(64)(x)
+        value_stream = tf.keras.layers.BatchNormalization()(value_stream)  # Batch Normalization
+        value_stream = tf.keras.layers.ReLU()(value_stream)  # Activación ReLU
         value = tf.keras.layers.Dense(1)(value_stream)
-    
-        advantage_stream = tf.keras.layers.Dense(64, activation='relu')(x)
+        
+        # Ventaja (advantage stream)
+        advantage_stream = tf.keras.layers.Dense(64)(x)
+        advantage_stream = tf.keras.layers.BatchNormalization()(advantage_stream)  # Batch Normalization
+        advantage_stream = tf.keras.layers.ReLU()(advantage_stream)  # Activación ReLU
         advantage = tf.keras.layers.Dense(self.action_space)(advantage_stream)
-    
+        
+        # Combinamos valor y ventaja
         outputs = tf.keras.layers.Lambda(combine_value_and_advantage)([value, advantage])
     
+        # Definimos el modelo
         model = tf.keras.models.Model(inputs=input_layer, outputs=outputs)
+    
+        # Compilamos el modelo
         model.compile(loss='mse', optimizer=tf.keras.optimizers.Adam(learning_rate=self.learning_rate))
+        
         return model
 
     def trade(self, state):
@@ -168,6 +187,8 @@ class AI_Trader():
 
         if self.epsilon > self.epsilon_final:
             self.epsilon *= self.epsilon_decay
+            
+            
     def save_model(self, name):
         self.model.save(f"{name}.h5")
         if self.use_double_dqn:
@@ -330,62 +351,44 @@ def state_creator_vectorized(data, timestep, window_size):
 
     return np.array(state).reshape(1, -1)
 
-def initialize_mt5():
-    if not mt5.initialize():
-        print("Error al inicializar MetaTrader 5")
-        print(f"Error: {mt5.last_error()}")
-        return False
-    else:
-        print("MetaTrader 5 inicializado correctamente")
-        print(mt5.version())
-        return True
-
-def dataset_loader_mt5(symbol, desde, hasta, timeframe):
-    desde_dt = datetime.strptime(desde, "%Y-%m-%d")
-    hasta_dt = datetime.strptime(hasta, "%Y-%m-%d")
-    timeframe_map = {
-        "1m": mt5.TIMEFRAME_M1, "5m": mt5.TIMEFRAME_M5, "15m": mt5.TIMEFRAME_M15,
-        "30m": mt5.TIMEFRAME_M30, "1h": mt5.TIMEFRAME_H1, "4h": mt5.TIMEFRAME_H4, "1d": mt5.TIMEFRAME_D1,
-    }
-    if timeframe not in timeframe_map:
-        print(f"Intervalo {timeframe} no válido. Opciones: {list(timeframe_map.keys())}")
-        return None
-    symbols = mt5.symbols_get()
-    symbol_names = [s.name for s in symbols]
-    if symbol not in symbol_names:
-        print(f"Símbolo {symbol} no disponible en MT5. Disponibles: {symbol_names[:10]} ...")
-        return None
-    rates = mt5.copy_rates_range(symbol, timeframe_map[timeframe], desde_dt, hasta_dt)
-    if rates is None or len(rates) == 0:
-        print(f"No se pudieron obtener datos para {symbol} en el período.")
-        return None
-    df = pd.DataFrame(rates)
-    df['time'] = pd.to_datetime(df['time'], unit='s')
-    df.set_index('time', inplace=True)
-    print(f"Datos cargados: {len(df)} registros para {symbol} desde {desde} hasta {hasta}")
-    return df[['close', 'tick_volume']]
-
 def dataset_loader_csv(csv_path):
     try:
         df = pd.read_csv(csv_path, sep='\t')  # Usa tabulador como separador
-        df.columns = [col.strip('<>').lower() for col in df.columns]  # Limpia < > y normaliza a mayúsculas
-        df['datetime'] = pd.to_datetime(df['date'] + ' ' + df['time'])  # Combina fecha y hora
+        df.columns = [col.strip('<>').lower() for col in df.columns]  # Limpia < > y normaliza nombres
+
+        # Verifica si existen las columnas necesarias
+        if 'date' not in df.columns:
+            print("Error: La columna 'date' es obligatoria.")
+            return None
+
+        # Combina fecha y hora si existe la columna 'time'
+        if 'time' in df.columns and df['time'].notnull().all():
+            df['datetime'] = pd.to_datetime(df['date'] + ' ' + df['time'].astype(str))
+        else:
+            print("Advertencia: No se encontró columna 'time' o tiene valores nulos. Se usará solo 'date'.")
+            df['datetime'] = pd.to_datetime(df['date'])
+
         df.set_index('datetime', inplace=True)
-        
+
+        # Renombra columna de volumen si existe
         if 'tickvol' in df.columns:
-           df.rename(columns={'tickvol': 'tick_volume'}, inplace=True)
+            df.rename(columns={'tickvol': 'tick_volume'}, inplace=True)
 
         print(f"Datos cargados desde: {csv_path}")
 
-        if 'close' in df.columns and 'tick_volume' in df.columns:
-            return df[['time','close', 'tick_volume']]
+        # Selecciona columnas disponibles
+        if 'time' in df.columns and 'close' in df.columns and 'spread' in df.columns and 'tick_volume' in df.columns:
+            return df[['time', 'close', 'tick_volume' , 'spread']]
+        elif 'close' in df.columns and 'tick_volume' in df.columns:
+            return df[['close', 'tick_volume']]
         elif 'close' in df.columns:
-            print("Advertencia: La columna 'TICKVOL' no se encontró en el CSV. Se utilizarán datos sin volumen.")
+            print("Advertencia: La columna 'tick_volume' no se encontró. Se usará tickvol=0.")
             df['tickvol'] = 0
             return df[['close', 'tickvol']]
         else:
-            print("Error: El archivo CSV debe contener al menos la columna 'CLOSE'.")
+            print("Error: El archivo CSV debe contener al menos la columna 'close'.")
             return None
+
     except FileNotFoundError:
         print(f"Error: No se encontró el archivo en la ruta: {csv_path}")
         return None
@@ -393,7 +396,7 @@ def dataset_loader_csv(csv_path):
         print(f"Error al leer el archivo CSV: {e}")
         return None
 
-
+    
 def plot_trading_session(data, buy_points, sell_points, symbol, timeframe, save_path='resultados_cv'):
     plt.figure(figsize=(14, 7))
     plt.plot(data.index, data['close'].values, label=f'{symbol} - {timeframe} (Precio)')
@@ -425,15 +428,17 @@ def calculate_sharpe_ratio(returns, risk_free_rate=0.0):
 
 #comienzo del codigo
 def main():
-    # Parámetros del activo financiero
-    cargar_csv = True
-    nombre_csv = "gold.csv"
+    
+    nombre_csv = "prueba.csv"
+       
+    cargar_modelo = False
+    modelo_existente = "resultados_cv/Silver_Solo_Compra_ai_trader_dueling_dqn_fold_1_daily"
     
     
     symbol = "GOLD"
     desde = "2018-01-01"
     hasta = "2024-01-01"
-    intervalo = "1h"
+    intervalo = "daily"
     
     
     es_indice = False
@@ -443,8 +448,8 @@ def main():
     pip_multiplier = 10000  # Para el Nasdaq (2 decimales)
     
     
-    episodes = 5 #int(input("Numeros de episodios:"))
-    batch_size = 64
+    episodes = 100
+    batch_size = 128
     epsilon_decay = 0.999
     learning_rate = 0.0001
     window_size = 18
@@ -462,36 +467,20 @@ def main():
     
     pip_value_eur_usd = 10 * lot_size
     
-    # Inicialización de mt5
-    if not cargar_csv:
-        if not initialize_mt5():
-            print("No se pudo inicializar MetaTrader 5. Finalizando.")
-            sys.exit(1)        
-          
-
     # Creación de carpeta para guardar los resultados
     resultados_dir = 'resultados_cv'
     os.makedirs(resultados_dir, exist_ok=True)
 
-    # Carga de datos desde el mt5
-    if not cargar_csv:
-        data = dataset_loader_mt5(symbol, desde, hasta, intervalo)
-    else:
-        data = dataset_loader_csv(nombre_csv)
+    data = dataset_loader_csv(nombre_csv)
         
-    if data is None or len(data) < 2 * window_size:
-        print("No hay suficientes datos.")
-        mt5.shutdown()
-        sys.exit(1)
-
     # Calcular los datos para el entramiento y para el test el X e Y
     train_size = int(len(data) * (1 - test_size_ratio))
     train_data = data.iloc[:train_size].copy()
     test_data = data.iloc[train_size:].copy()
     
-    hora = data['time']
+    if 'time' in data.columns and data['time'].notnull().all():
+        hora = data['time']
     
-
     state_size = (window_size - 1) * 2 + window_size + window_size
 
     # Carga el modelo y ve si cargar uno o crear uno nuevo
@@ -500,8 +489,7 @@ def main():
                        learning_rate= learning_rate,
                        commission_per_trade= commission_per_trade
                        )
-    cargar_modelo = False
-    modelo_existente = "resultados_cv/ai_trader_dueling_dqn_fold_3_1h"
+
 
     if cargar_modelo:
         try:
@@ -571,12 +559,13 @@ def main():
                 reward = 0
                 # Precio actual
                 current_price = fold_data['close'].iloc[t].item()
+                spread = fold_data['spread'].iloc[t].item() * lot_size
                 # Indice del precio en el estado actual
                 timestamp = fold_data.index[t]
 
                 # Coloca el precio de compra actual con
-                buy_price = current_price + trader.spread / 2 if action == 1 else current_price
-                sell_price = current_price - trader.spread / 2 if action == 2 and len(trader.inventory) > 0 else current_price
+                buy_price = current_price +  spread / 2 if action == 1 else current_price
+                sell_price = current_price - spread / 2 if action == 2 and len(trader.inventory) > 0 else current_price
 
                 # Si la accion de la ia es igua a 1 compra
                 if action == 1 and not trader.inventory :  # Comprar
@@ -584,6 +573,7 @@ def main():
                     trader.inventory.append(buy_price)
                     # Suma al contador de trades
                     trades_count += 1
+                    
                     # Calcula cuanto dinero tiene (considerando el lote)
                     # if(current_equity <= 50):
                         # reward = -10
@@ -610,8 +600,39 @@ def main():
                         profit_pips = (sell_price - original_buy_price) 
                         # Calcula la ganancia/pérdida en dólares
                         profit_dollars = profit_pips * pip_value_eur_usd
+                        
+                    reward = profit_pips
+                    # Coloco el profit en la variable (en pips)
+                    total_profit_pips += profit_pips
+                    # Usando la variable pip_value que ya definiste
+                    profit_dollars_total += profit_dollars
+                    
+                    # Suma al contador de trades
+                    trades_count += 1
+                    if (es_indice):
+                        # Calcula cuanto dinero tiene (considerando el lote)
+                        current_equity += profit_dollars * (1 - trader.commission_per_trade) # Asumiendo indices es la base
+                    else:
                 
-                elif int(hora[t].split(":")[0]) == 23 and len(trader.inventory) > 0:
+                        current_equity += profit_dollars  * (1 - trader.commission_per_trade) # Asumiendo EUR es la base
+                        
+                    # Agrega el retorno al retorno del episodio cada profit (en pips)
+                    episode_returns_pips.append(profit_pips)
+                    # Verifica si el profit salio ganador agrefa uno a wins y agrega el profit a winning_profits (en pips)
+                    if profit_pips > 0:
+                        wins += 1
+                        winning_profits_pips.append(profit_pips)
+                    # De lo contrario si sale perdedor se agrega uno a lose y agrega el profit a losing_profits (en pips)
+                    else:
+                        losses += 1
+                        losing_profits_pips.append(profit_pips)
+                    if episode == episodes and fold == n_folds -1 : sell_points.append((timestamp, sell_price))
+                
+                    # Puedes imprimir o guardar la ganancia en dólares si lo deseas
+                   #print("")
+                    print(f"episodio: {episode} ,por eleccion de ia  Venta a {sell_price:.5f}, Compra a {original_buy_price:.5f}, Profit (pips): {profit_pips:.2f}, Profit (USD): {profit_dollars:.2f}, total de dinero actual {current_equity}")
+                
+                elif 'time' in data.columns and data['time'].notnull().all() and int(hora[t].split(":")[0]) == 23 and len(trader.inventory) > 0:
                     # Toma el precio que compro el activo
                     original_buy_price = trader.inventory.pop(0)
                     # Calcula el profit que obtuvo de la venta de activo (en pips)
@@ -627,14 +648,14 @@ def main():
                         profit_pips = (sell_price - original_buy_price) 
                         # Calcula la ganancia/pérdida en dólares
                         profit_dollars = profit_pips * pip_value_eur_usd
-    # vender forzadamente por cierre de jornada, por ejemplo
+# vender forzadamente por cierre de jornada, por ejemplo
                         
                     # La recompensa es el profit ya sea positivo o negativo (en la unidad de precio)
                     reward = profit_pips
                     # Coloco el profit en la variable (en pips)
                     total_profit_pips += profit_pips
                     # Usando la variable pip_value que ya definiste
-                    profit_dollars_total += profit_pips * pip_value
+                    profit_dollars_total +=  profit_dollars
                     
                     # Suma al contador de trades
                     trades_count += 1
@@ -681,6 +702,7 @@ def main():
                 state = next_state
 
                 if len(trader.memory) > batch_size:
+                    #entrenamiento !!!!! 
                     trader.batch_train(batch_size)
 
             sharpe = calculate_sharpe_ratio(np.array(episode_returns_pips))
@@ -689,7 +711,7 @@ def main():
             avg_loss = np.mean(losing_profits_pips) if losing_profits_pips else 0
             max_drawdown = max(drawdown_history_episode) if drawdown_history_episode else 0
             print("")
-            print(f"Fin Episodio {episode}: Beneficio (pips)={price_format(total_profit_pips)},Beneficio (usd)={price_format(profit_dollars)}, Trades={trades_count}, Sharpe={sharpe:.2f}, Drawdown={max_drawdown:.2%}, Accuracy={accuracy:.2%}")
+            print(f"Fin Episodio {episode}: Beneficio (pips)={total_profit_pips},Beneficio (usd)={price_format(profit_dollars_total)}, Trades={trades_count}, Sharpe={sharpe:.2f}, Drawdown={max_drawdown:.2%}, Accuracy={accuracy:.2%}")
             print("")
             trader.profit_history.append(total_profit_pips)
             trader.epsilon_history.append(trader.epsilon)
@@ -702,7 +724,7 @@ def main():
             trader.avg_loss_history.append(avg_loss)
 
         trader.plot_training_metrics(save_path=resultados_dir)
-        trader.save_model(os.path.join(resultados_dir, f"ai_trader_dueling_dqn_fold_{fold + 1}_{intervalo}"))
+        trader.save_model(os.path.join(resultados_dir, f"Silver_Solo_Compra_ai_trader_dueling_dqn_{fold + 1}_{intervalo}"))
         if buy_points or sell_points:
             plot_trading_session(fold_data, buy_points, sell_points, symbol, intervalo, save_path=resultados_dir)
 
@@ -747,14 +769,19 @@ def main():
         losses_test = 0
         winning_profits_test_pips = []
         losing_profits_test_pips = []
+        
+        if 'time' in test_data.columns and test_data['time'].notnull().all():
+            hora_test = test_data['time']
+        
 
         for t in range(test_samples):
             test_action = trader.trade(test_states[t])
             current_price = test_data['close'].iloc[t].item()
+            spread = test_data['spread'].iloc[t].item() * lot_size
             timestamp = test_data.index[t]
-
-            buy_price_test = current_price + trader.spread / 2 if test_action == 1 else current_price
-            sell_price_test = current_price - trader.spread / 2 if test_action == 2 and len(test_inventory) > 0 else current_price
+            
+            buy_price_test = current_price + spread / 2 if test_action == 1 else current_price
+            sell_price_test = current_price - spread / 2 if test_action == 2 and len(test_inventory) > 0 else current_price
 
             if test_action == 1 and not test_inventory:
                 test_inventory.append(buy_price_test)
@@ -762,6 +789,8 @@ def main():
                 #if(not es_indice):
                    # test_current_equity -= buy_price_test * lot_size * 100000 * (1 + trader.commission_per_trade)
                 test_buy_points.append((timestamp, buy_price_test))
+                
+                
             elif test_action == 2 and len(test_inventory) > 0:
                 original_buy_price_test = test_inventory.pop(0)
                 
@@ -769,11 +798,46 @@ def main():
                     profit_test_pips = (sell_price_test - original_buy_price_test) 
                     ticks = profit_pips / 0.25   
                     test_profit_dollars = ticks * tick_value * (lot_size / 1.0)
-                else: 
+                elif(es_forex): 
                     profit_test_pips = (sell_price_test - original_buy_price_test) * pip_multiplier
-        
                     test_profit_dollars = profit_test_pips * pip_value_eur_usd
+                elif(es_metal):
+                    profit_test_pips = (sell_price_test - original_buy_price_test) 
+                    test_profit_dollars = profit_test_pips * pip_value_eur_usd
+                                    
+                test_profit_pips += profit_test_pips
+                test_trades += 1
+                test_profit_dollars_total +=test_profit_dollars
+                if (es_indice):
+                    # Calcula cuanto dinero tiene (considerando el lote)
+                    test_current_equity += test_profit_dollars * (1 - trader.commission_per_trade)
+                else:
+                    test_current_equity += test_profit_dollars * (1 - trader.commission_per_trade)
                 
+                test_returns_pips.append(profit_test_pips)
+                if profit_test_pips > 0:
+                    wins_test += 1
+                    winning_profits_test_pips.append(profit_test_pips)
+                else:
+                    losses_test += 1
+                    losing_profits_test_pips.append(profit_test_pips)
+                
+                test_sell_points.append((timestamp, sell_price_test))
+            
+            elif 'time' in test_data.columns and test_data['time'].notnull().all() and int(hora_test[t].split(":")[0]) == 23 and len(trader.inventory) > 0:
+                original_buy_price_test = test_inventory.pop(0)
+                
+                if (es_indice):
+                    profit_test_pips = (sell_price_test - original_buy_price_test) 
+                    ticks = profit_pips / 0.25   
+                    test_profit_dollars = ticks * tick_value * (lot_size / 1.0)
+                elif(es_forex): 
+                    profit_test_pips = (sell_price_test - original_buy_price_test) * pip_multiplier
+                    test_profit_dollars = profit_test_pips * pip_value_eur_usd
+                elif(es_metal):
+                    profit_test_pips = (sell_price_test - original_buy_price_test) 
+                    test_profit_dollars = profit_test_pips * pip_value_eur_usd
+                                    
                 test_profit_pips += profit_test_pips
                 test_trades += 1
                 test_profit_dollars_total +=test_profit_dollars
@@ -793,6 +857,7 @@ def main():
                 
                 test_sell_points.append((timestamp, sell_price_test))
 
+
             if test_current_equity > test_peak_equity:
                 test_peak_equity = test_current_equity
             test_drawdown = (test_peak_equity - test_current_equity) / test_peak_equity if test_peak_equity != 0 else 0
@@ -806,9 +871,6 @@ def main():
 
         print(f"Resultados en Prueba: Beneficio (pips)={price_format(test_profit_pips)},Beneficio (dollar) = {test_profit_dollars_total} Trades={test_trades}, Sharpe={test_sharpe:.2f}, Drawdown={test_max_drawdown:.2%}, Accuracy={test_accuracy:.2%}")
         plot_trading_session(test_data, test_buy_points, test_sell_points, symbol, intervalo, save_path=resultados_dir)
-
-    mt5.shutdown()
-    print("Conexión con MetaTrader 5 cerrada")
 
 def run_main():
     main()

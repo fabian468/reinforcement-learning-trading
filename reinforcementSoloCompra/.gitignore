@@ -1,0 +1,5 @@
+*.csv
+*.tar
+*.env
+
+resultados_cv
