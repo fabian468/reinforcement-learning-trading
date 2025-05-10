@@ -61,7 +61,7 @@ class AI_Trader():
                  ):  
         self.state_size = state_size
         self.action_space = action_space
-        self.memory = deque(maxlen=4000)
+        self.memory = deque(maxlen=5000)
         self.inventory = []
         self.model_name = model_name
         self.reward_noise_std = 0.001
@@ -78,6 +78,7 @@ class AI_Trader():
         self.use_double_dqn = use_double_dqn
         self.target_model_update = target_model_update
         self.step_counter = 0
+        self.total_rewards = 0
 
         self.model = self.model_builder()
 
@@ -99,28 +100,28 @@ class AI_Trader():
         input_layer = tf.keras.layers.Input(shape=(self.state_size,))
         
         # Capa densa con Batch Normalization
-        x = tf.keras.layers.Dense(28)(input_layer)
+        x = tf.keras.layers.Dense(32)(input_layer)
         x = tf.keras.layers.BatchNormalization()(x)  # Batch Normalization
         x = tf.keras.layers.ReLU()(x)  # Activación ReLU
     
         # Capa adicional
-        x = tf.keras.layers.Dense(28)(x)
+        x = tf.keras.layers.Dense(64)(x)
         x = tf.keras.layers.BatchNormalization()(x)  # Batch Normalization
         x = tf.keras.layers.ReLU()(x)  # Activación ReLU
     
         # Otra capa densa con Batch Normalization
-        x = tf.keras.layers.Dense(64)(x)
+        x = tf.keras.layers.Dense(128)(x)
         x = tf.keras.layers.BatchNormalization()(x)  # Batch Normalization
         x = tf.keras.layers.ReLU()(x)  # Activación ReLU
         
         # Valor (value stream)
-        value_stream = tf.keras.layers.Dense(64)(x)
+        value_stream = tf.keras.layers.Dense(128)(x)
         value_stream = tf.keras.layers.BatchNormalization()(value_stream)  # Batch Normalization
         value_stream = tf.keras.layers.ReLU()(value_stream)  # Activación ReLU
         value = tf.keras.layers.Dense(1)(value_stream)
         
         # Ventaja (advantage stream)
-        advantage_stream = tf.keras.layers.Dense(64)(x)
+        advantage_stream = tf.keras.layers.Dense(128)(x)
         advantage_stream = tf.keras.layers.BatchNormalization()(advantage_stream)  # Batch Normalization
         advantage_stream = tf.keras.layers.ReLU()(advantage_stream)  # Activación ReLU
         advantage = tf.keras.layers.Dense(self.action_space)(advantage_stream)
@@ -426,13 +427,15 @@ def calculate_sharpe_ratio(returns, risk_free_rate=0.0):
     return np.mean(excess_returns) / np.std(excess_returns) if np.std(excess_returns) != 0 else 0.0
 
 
+#como puedo mejorar la convergencia el 
+
 #comienzo del codigo
 def main():
     
     nombre_csv = "prueba.csv"
        
     cargar_modelo = False
-    modelo_existente = "resultados_cv/Silver_Solo_Compra_ai_trader_dueling_dqn_fold_1_daily"
+    modelo_existente = "resultados_cv/Silver_Solo_Compra_ai_trader_dueling_dqn_3_daily"
     
     
     symbol = "GOLD"
@@ -448,17 +451,19 @@ def main():
     pip_multiplier = 10000  # Para el Nasdaq (2 decimales)
     
     
-    episodes = 100
+    episodes = 60
     batch_size = 128
     epsilon_decay = 0.999
-    learning_rate = 0.0001
-    window_size = 18
+    gamma = 0.95
+    cada_cuanto_actualizar = 80
+    learning_rate = 0.00001
+    window_size = 25
     estados_vectorizados = True
 
 
     balance_first = 1000 # dinero inicial
     lot_size = 0.01   
-    commission_per_trade = 0.07
+    commission_per_trade = 0
     test_size_ratio = 0.2  # 20% para prueba
     
     # Para calcular el valor del pip:
@@ -487,7 +492,9 @@ def main():
     trader = AI_Trader(state_size,
                        epsilon_decay= epsilon_decay,
                        learning_rate= learning_rate,
-                       commission_per_trade= commission_per_trade
+                       commission_per_trade= commission_per_trade,
+                       gamma = gamma,
+                       target_model_update = cada_cuanto_actualizar
                        )
 
 
@@ -538,6 +545,7 @@ def main():
             trades_count = 0
             wins = 0
             losses = 0
+            reward_total =0
             profit_dollars = 0
             profit_dollars_total = 0
             winning_profits_pips = []
@@ -613,8 +621,7 @@ def main():
                         # Calcula cuanto dinero tiene (considerando el lote)
                         current_equity += profit_dollars * (1 - trader.commission_per_trade) # Asumiendo indices es la base
                     else:
-                
-                        current_equity += profit_dollars  * (1 - trader.commission_per_trade) # Asumiendo EUR es la base
+                        current_equity += profit_dollars  * (1 - trader.commission_per_trade) 
                         
                     # Agrega el retorno al retorno del episodio cada profit (en pips)
                     episode_returns_pips.append(profit_pips)
@@ -648,7 +655,7 @@ def main():
                         profit_pips = (sell_price - original_buy_price) 
                         # Calcula la ganancia/pérdida en dólares
                         profit_dollars = profit_pips * pip_value_eur_usd
-# vender forzadamente por cierre de jornada, por ejemplo
+                    # vender forzadamente por cierre de jornada, por ejemplo
                         
                     # La recompensa es el profit ya sea positivo o negativo (en la unidad de precio)
                     reward = profit_pips
@@ -693,9 +700,12 @@ def main():
                 drawdown_history_episode.append(drawdown)
                 # Recompensa para minimizar el drawdown
                 reward -= 0.1 * sigmoid(drawdown * 10) - 0.05
+                
+                
                 # Pequeño ruido aleatorio para mejorar el aprendizaje
                 reward += np.random.normal(0, trader.reward_noise_std)
-
+                
+                trader.total_rewards += reward
                 # Ver si termino el episodio
                 done = (t == data_samples - 1)
                 trader.memory.append((state, action, reward, next_state, done))
@@ -712,6 +722,7 @@ def main():
             max_drawdown = max(drawdown_history_episode) if drawdown_history_episode else 0
             print("")
             print(f"Fin Episodio {episode}: Beneficio (pips)={total_profit_pips},Beneficio (usd)={price_format(profit_dollars_total)}, Trades={trades_count}, Sharpe={sharpe:.2f}, Drawdown={max_drawdown:.2%}, Accuracy={accuracy:.2%}")
+            print(f"total de recompensas: {trader.total_rewards} ")
             print("")
             trader.profit_history.append(total_profit_pips)
             trader.epsilon_history.append(trader.epsilon)
