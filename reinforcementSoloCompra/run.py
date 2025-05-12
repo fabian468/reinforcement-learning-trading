@@ -460,6 +460,7 @@ def main():
   
     
     episodes = 30
+    n_folds = 2
     batch_size = 128
     epsilon_decay = 0.999
     gamma = 0.95
@@ -469,7 +470,7 @@ def main():
     estados_vectorizados = True
 
 
-    balance_first = 1000 # dinero inicial
+    balance_first = 100 # dinero inicial
     lot_size = 0.01   
     commission_per_trade = 0
     test_size_ratio = 0.2  # 20% para prueba
@@ -514,7 +515,7 @@ def main():
         except Exception as e:
             print(f"Error al cargar el modelo {modelo_existente}: {str(e)}")
 
-    n_folds = 2
+    
     fold_size = len(train_data) // n_folds
     all_fold_metrics = []
     
@@ -592,7 +593,7 @@ def main():
                     # Agrega el precio de compra al inventario
                     trader.inventory.append(buy_price)
                     # Suma al contador de trades
-                    trades_count += 1
+                    #trades_count += 1
                     
                     # Calcula cuanto dinero tiene (considerando el lote)
                     # if(current_equity <= 50):
@@ -660,13 +661,14 @@ def main():
                    #print("")
                     if profit_pips > 0:
                         previus_profit = profit_pips
-                    print(f"episodio: {episode} ,recompensa:{reward} , por eleccion de ia  Venta a {sell_price:.5f}, Compra a {original_buy_price:.5f}, Profit (pips): {profit_pips:.2f}, Profit (USD): {profit_dollars:.2f}, total de dinero actual {current_equity}")
+                    print(f"episodio: {episode} ,recompensa:{reward:.2f} , por eleccion de ia  Venta a {sell_price:.5f}, Compra a {original_buy_price:.5f}, Profit (pips): {profit_pips:.2f}, Profit (USD): {profit_dollars:.2f}, total de dinero actual {current_equity:.2f}")
                     print("")
                     print(f"suma de recompensa {trader.total_rewards}")
                     print("")
                     
                     
-                elif 'time' in data.columns and data['time'].notnull().all() and int(hora[t].split(":")[0]) == 23 and len(trader.inventory) > 0:
+                elif 'time' in data.columns and data['time'].notnull().all() and int(hora.iloc[t].split(":")[0]) == 23 and len(trader.inventory) > 0:
+
                     # Toma el precio que compro el activo
                     original_buy_price = trader.inventory.pop(0)
                     # Calcula el profit que obtuvo de la venta de activo (en pips)
@@ -728,7 +730,7 @@ def main():
                    #print("")
                     if profit_pips > 0:
                         previus_profit = profit_pips
-                    print(f"episodio: {episode} ,recompensa:{reward}, Venta a {sell_price:.5f}, Compra a {original_buy_price:.5f}, Profit (pips): {profit_pips:.2f}, Profit (USD): {profit_dollars:.2f}, total de dinero actual {current_equity}")
+                    print(f"episodio: {episode} ,recompensa:{reward:.2f}, Venta a {sell_price:.5f}, Compra a {original_buy_price:.5f}, Profit (pips): {profit_pips:.2f}, Profit (USD): {profit_dollars:.2f}, total de dinero actual {current_equity:.2f}")
     
                 # Seguimos en el bucle de episodes
                 # Si el dinero actual es mayor al que empezo se actualiza peak_equity despues del episodio
@@ -737,7 +739,8 @@ def main():
                     peak_equity = current_equity
                 # Calculo de drawdown como ($1070 - $1050) / $1070 ≈ 0.0187 o 1.87%.
                 drawdown = (peak_equity - current_equity) / peak_equity if peak_equity != 0 else 0
-                # Se agrega al array para ver cual es el max drawdown
+                # Se agrega al array para ver cual es el max drawdown 
+                drawdown *= 100
                 drawdown_history_episode.append(drawdown)
                 # Recompensa para minimizar el drawdown
                 reward -= 0.1 * sigmoid(drawdown * 10) - 0.05
@@ -762,9 +765,9 @@ def main():
             avg_loss = np.mean(losing_profits_pips) if losing_profits_pips else 0
             max_drawdown = max(drawdown_history_episode) if drawdown_history_episode else 0
             print("")
-            print(f"Fin Episodio {episode}: Beneficio (pips)={total_profit_pips},Beneficio (usd)={price_format(profit_dollars_total)}, Trades={trades_count}, Sharpe={sharpe:.2f}, Drawdown={max_drawdown:.2%}, Accuracy={accuracy:.2%}")
-            print(f"total de recompensas: {trader.total_rewards} ")
-            print("")
+            print(f"Fin Episodio {episode}: Beneficio (pips)={total_profit_pips:.2f},Beneficio (usd)={price_format(profit_dollars_total:.2f)}, Trades={trades_count}, Sharpe={sharpe:.2f}, Drawdown={max_drawdown:.2%}, Accuracy={accuracy:.2%}")
+            print(f"total de recompensas: {trader.total_rewards:.2f} ")
+            print("===========================================================================")
             trader.profit_history.append(total_profit_pips)
             trader.epsilon_history.append(trader.epsilon)
             trader.trades_history.append(trades_count)
@@ -830,15 +833,15 @@ def main():
         for t in range(test_samples):
             test_action = trader.trade(test_states[t])
             current_price = test_data['close'].iloc[t].item()
-            spread = test_data['spread'].iloc[t].item() * lot_size
+            spread_test = test_data['spread'].iloc[t].item() * lot_size
             timestamp = test_data.index[t]
             
-            buy_price_test = current_price + spread / 2 if test_action == 1 else current_price
-            sell_price_test = current_price - spread / 2 if test_action == 2 and len(test_inventory) > 0 else current_price
+            buy_price_test = current_price + spread_test / 2 if test_action == 1 else current_price
+            sell_price_test = current_price - spread_test / 2 if test_action == 2 and len(test_inventory) > 0 else current_price
 
             if test_action == 1 and not test_inventory:
                 test_inventory.append(buy_price_test)
-                test_trades += 1
+            
                 #if(not es_indice):
                    # test_current_equity -= buy_price_test * lot_size * 100000 * (1 + trader.commission_per_trade)
                 test_buy_points.append((timestamp, buy_price_test))
@@ -877,7 +880,7 @@ def main():
                 
                 test_sell_points.append((timestamp, sell_price_test))
             
-            elif 'time' in test_data.columns and test_data['time'].notnull().all() and int(hora_test[t].split(":")[0]) == 23 and len(trader.inventory) > 0:
+            elif 'time' in test_data.columns and test_data['time'].notnull().all() and int(hora_test.iloc[t].split(":")[0]) == 23 and len(trader.inventory) > 0:
                 original_buy_price_test = test_inventory.pop(0)
                 
                 if (es_indice):
@@ -914,6 +917,7 @@ def main():
             if test_current_equity > test_peak_equity:
                 test_peak_equity = test_current_equity
             test_drawdown = (test_peak_equity - test_current_equity) / test_peak_equity if test_peak_equity != 0 else 0
+            test_drawdown *= 100
             test_drawdown_history.append(test_drawdown)
 
         test_sharpe = calculate_sharpe_ratio(np.array(test_returns_pips))
