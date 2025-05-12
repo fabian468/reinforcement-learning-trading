@@ -87,6 +87,7 @@ class AI_Trader():
             self.target_model.set_weights(self.model.get_weights())
 
         self.profit_history = []
+        self.rewards_history = []
         self.epsilon_history = []
         self.trades_history = []
         self.loss_history = []
@@ -237,12 +238,12 @@ class AI_Trader():
             print(f"Error al cargar modelo: {e}")
             print("Manteniendo valores por defecto.")
 
-    def plot_training_metrics(self, save_path='resultados_cv'):
-        min_length = min(len(self.profit_history), len(self.epsilon_history), len(self.trades_history), len(self.loss_history), len(self.drawdown_history), len(self.sharpe_ratios), len(self.accuracy_history), len(self.avg_win_history), len(self.avg_loss_history))
+    def plot_training_metrics(self, save_path='resultados_cv' ):
+        min_length = min(len(self.profit_history), len(self.rewards_history),len(self.epsilon_history), len(self.trades_history), len(self.loss_history), len(self.drawdown_history), len(self.sharpe_ratios), len(self.accuracy_history), len(self.avg_win_history), len(self.avg_loss_history))
 
         episodes = range(1, min_length + 1)
 
-        fig, axs = plt.subplots(3, 2, figsize=(15, 12))
+        fig, axs = plt.subplots(4, 2, figsize=(15, 16))  # 4 filas, 2 columnas
         fig.suptitle('Métricas de Entrenamiento', fontsize=16)
 
         axs[0, 0].plot(episodes, self.profit_history[:min_length], label='Beneficio Total')
@@ -278,7 +279,13 @@ class AI_Trader():
         axs[2, 1].set_xlabel('Episodio')
         axs[2, 1].grid(True)
         axs[2, 1].legend()
-
+        
+        axs[3, 0].plot(episodes, self.rewards_history[:min_length], label='Recompensa por Episodio', color='blue')
+        axs[3, 0].set_ylabel('Recompensa')
+        axs[3, 0].set_xlabel('Episodio')
+        axs[3, 0].grid(True)
+        axs[3, 0].legend()
+     
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         plt.savefig(os.path.join(save_path, 'training_metrics.png'))
         plt.show()
@@ -354,7 +361,7 @@ def state_creator_vectorized(data, timestep, window_size):
 
 def dataset_loader_csv(csv_path):
     try:
-        df = pd.read_csv(csv_path, sep='\t')  # Usa tabulador como separador
+        df = pd.read_csv(f"data/{csv_path}", sep='\t')  # Usa tabulador como separador
         df.columns = [col.strip('<>').lower() for col in df.columns]  # Limpia < > y normaliza nombres
 
         # Verifica si existen las columnas necesarias
@@ -450,8 +457,9 @@ def main():
     tick_value = 5  
     pip_multiplier = 10000  # Para el Nasdaq (2 decimales)
     
+  
     
-    episodes = 60
+    episodes = 30
     batch_size = 128
     epsilon_decay = 0.999
     gamma = 0.95
@@ -465,6 +473,7 @@ def main():
     lot_size = 0.01   
     commission_per_trade = 0
     test_size_ratio = 0.2  # 20% para prueba
+    penalty_factor = 2.0
     
     # Para calcular el valor del pip:
     # El volumen del contrato es 20 USD por cada 0.01 lote (tu tamaño de lote) por cada pip.
@@ -505,9 +514,10 @@ def main():
         except Exception as e:
             print(f"Error al cargar el modelo {modelo_existente}: {str(e)}")
 
-    n_folds = 3
+    n_folds = 2
     fold_size = len(train_data) // n_folds
     all_fold_metrics = []
+    
 
     # Comienza el entrenamiento del primero fold
     for fold in range(n_folds):
@@ -533,7 +543,9 @@ def main():
         trader.avg_loss_history = []
         trader.epsilon = 1.0
         trader.step_counter = 0
+        trader.total_rewards = 0
         trader.memory.clear()
+        
 
         # Comienza los episodios
         for episode in range(1, episodes + 1):
@@ -545,7 +557,7 @@ def main():
             trades_count = 0
             wins = 0
             losses = 0
-            reward_total =0
+            previus_profit = 0.01
             profit_dollars = 0
             profit_dollars_total = 0
             winning_profits_pips = []
@@ -609,7 +621,16 @@ def main():
                         # Calcula la ganancia/pérdida en dólares
                         profit_dollars = profit_pips * pip_value_eur_usd
                         
-                    reward = profit_pips
+                    if profit_pips > 0:
+                         delta_profit = profit_pips - previus_profit
+                         if(delta_profit > 0):
+                             reward = delta_profit  # Recompensa proporcional a la mejora
+                         else:
+                             reward= -0.5
+                    else:
+                         reward =  profit_pips
+                         
+                    #reward = profit_pips
                     # Coloco el profit en la variable (en pips)
                     total_profit_pips += profit_pips
                     # Usando la variable pip_value que ya definiste
@@ -622,7 +643,7 @@ def main():
                         current_equity += profit_dollars * (1 - trader.commission_per_trade) # Asumiendo indices es la base
                     else:
                         current_equity += profit_dollars  * (1 - trader.commission_per_trade) 
-                        
+                    
                     # Agrega el retorno al retorno del episodio cada profit (en pips)
                     episode_returns_pips.append(profit_pips)
                     # Verifica si el profit salio ganador agrefa uno a wins y agrega el profit a winning_profits (en pips)
@@ -637,8 +658,14 @@ def main():
                 
                     # Puedes imprimir o guardar la ganancia en dólares si lo deseas
                    #print("")
-                    print(f"episodio: {episode} ,por eleccion de ia  Venta a {sell_price:.5f}, Compra a {original_buy_price:.5f}, Profit (pips): {profit_pips:.2f}, Profit (USD): {profit_dollars:.2f}, total de dinero actual {current_equity}")
-                
+                    if profit_pips > 0:
+                        previus_profit = profit_pips
+                    print(f"episodio: {episode} ,recompensa:{reward} , por eleccion de ia  Venta a {sell_price:.5f}, Compra a {original_buy_price:.5f}, Profit (pips): {profit_pips:.2f}, Profit (USD): {profit_dollars:.2f}, total de dinero actual {current_equity}")
+                    print("")
+                    print(f"suma de recompensa {trader.total_rewards}")
+                    print("")
+                    
+                    
                 elif 'time' in data.columns and data['time'].notnull().all() and int(hora[t].split(":")[0]) == 23 and len(trader.inventory) > 0:
                     # Toma el precio que compro el activo
                     original_buy_price = trader.inventory.pop(0)
@@ -656,9 +683,21 @@ def main():
                         # Calcula la ganancia/pérdida en dólares
                         profit_dollars = profit_pips * pip_value_eur_usd
                     # vender forzadamente por cierre de jornada, por ejemplo
-                        
+                    
+    
+                    
+                    #print(delta_profit)
+                    
+                    if profit_pips > 0:
+                        delta_profit = profit_pips - previus_profit
+                        if(delta_profit > 0):
+                            reward = delta_profit  # Recompensa proporcional a la mejora
+                        else:
+                            reward= -0.5
+                    else:
+                        reward =  profit_pips
                     # La recompensa es el profit ya sea positivo o negativo (en la unidad de precio)
-                    reward = profit_pips
+                    #reward = profit_pips
                     # Coloco el profit en la variable (en pips)
                     total_profit_pips += profit_pips
                     # Usando la variable pip_value que ya definiste
@@ -687,8 +726,10 @@ def main():
                 
                     # Puedes imprimir o guardar la ganancia en dólares si lo deseas
                    #print("")
-                    print(f"episodio: {episode} , Venta a {sell_price:.5f}, Compra a {original_buy_price:.5f}, Profit (pips): {profit_pips:.2f}, Profit (USD): {profit_dollars:.2f}, total de dinero actual {current_equity}")
-           
+                    if profit_pips > 0:
+                        previus_profit = profit_pips
+                    print(f"episodio: {episode} ,recompensa:{reward}, Venta a {sell_price:.5f}, Compra a {original_buy_price:.5f}, Profit (pips): {profit_pips:.2f}, Profit (USD): {profit_dollars:.2f}, total de dinero actual {current_equity}")
+    
                 # Seguimos en el bucle de episodes
                 # Si el dinero actual es mayor al que empezo se actualiza peak_equity despues del episodio
                 # para calcular el drawdown
@@ -727,6 +768,7 @@ def main():
             trader.profit_history.append(total_profit_pips)
             trader.epsilon_history.append(trader.epsilon)
             trader.trades_history.append(trades_count)
+            trader.rewards_history.append(trader.total_rewards)
             trader.loss_history.append(np.mean(trader.loss_history[-10:]) if trader.loss_history else 0)
             trader.drawdown_history.append(max_drawdown)
             trader.sharpe_ratios.append(sharpe)
@@ -734,7 +776,7 @@ def main():
             trader.avg_win_history.append(avg_win)
             trader.avg_loss_history.append(avg_loss)
 
-        trader.plot_training_metrics(save_path=resultados_dir)
+        trader.plot_training_metrics(save_path=resultados_dir )
         trader.save_model(os.path.join(resultados_dir, f"Silver_Solo_Compra_ai_trader_dueling_dqn_{fold + 1}_{intervalo}"))
         if buy_points or sell_points:
             plot_trading_session(fold_data, buy_points, sell_points, symbol, intervalo, save_path=resultados_dir)
