@@ -2,4 +2,5 @@
 *.tar
 *.env
 
+__pycache__
 resultados_cv
