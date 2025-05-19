@@ -11,11 +11,7 @@ import pandas as pd
 import tensorflow as tf
 import matplotlib.pyplot as plt
 from collections import deque
-from dotenv import load_dotenv
 import os
-
-load_dotenv() 
-
 
 @tf.keras.utils.register_keras_serializable()
 def combine_value_and_advantage(inputs):
