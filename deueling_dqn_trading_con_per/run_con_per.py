@@ -264,6 +264,8 @@ def main():
             
             best_low =9999999
             
+            trader.total_rewards = 0
+            
             if len(trader.inventory) > 0:
                 trader.inventory.clear()
 
