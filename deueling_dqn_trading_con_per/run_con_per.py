@@ -10,6 +10,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from dotenv import load_dotenv
 import os
+import dropbox
 
 from notificador import enviar_alerta
 
@@ -19,9 +20,13 @@ import pstats
 load_dotenv() 
 
 from dueling_dqn_con_per import AI_Trader_per 
-from state_creator import  state_creator_vectorized , state_creator
+from state_creator import  state_creator_vectorized 
 from AdvancedRewardSystem import AdvancedRewardSystem , calculate_advanced_reward
+from request_datos_backend import upload_training_data
 
+DROPBOX_ACCESS_TOKEN = os.getenv("ACCESS_TOKEN_DROPBOX")
+
+dbx = dropbox.Dropbox(DROPBOX_ACCESS_TOKEN)
 
 def sigmoid(x):
     return 1 / (1 + math.exp(-x))
@@ -126,14 +131,16 @@ def main():
     nombre_csv = "XAUUSD_M15_2025_03_01_2025_03_31.csv"
        
     cargar_modelo = False
-    modelo_existente = "resultados_cv/Oro_15_min_2025_03_01_2025_03_30"
+    modelo_existente = "resultados_cv/Oro_15_min_2025_03_01_2025_03_30_prueba"
     
+    guardar_estadisticas_en_backend = True   
+    guardar_en_dropbox = False
     
     symbol = "GOLD"
     intervalo = "daily"
     
     
-    nombre_modelo_guardado = "Oro_15_min_2025_03_01_2025_03_30_con_mejoras_recompensas"
+    nombre_modelo_guardado = "Oro_15_min_2025_03_01_2025_03_30_prueba"
     
     
     es_indice = False
@@ -143,16 +150,16 @@ def main():
     pip_multiplier = 10000  # Para el Nasdaq (2 decimales)
     
   
-    episodes = 100
+    episodes = 1000
     n_folds = 3
-    batch_size = 64
-    epsilon_decay = 0.995
+    batch_size = 256
+    epsilon_decay = 0.9995
     gamma = 0.95
-    cada_cuanto_actualizar = 10
+    cada_cuanto_actualizar = 30
     learning_rate = 0.001
-    window_size = 5
-    estados_vectorizados = True
+    window_size = 15
 
+    ventana_para_los_estados_de_datos = 4
 
     balance_first = 100 # dinero inicial
     lot_size = 0.01   
@@ -177,13 +184,11 @@ def main():
     if 'time' in data.columns and data['time'].notnull().all():
         hora = data['time']
     
-    state_size = (window_size - 1) * 2 + window_size + window_size
-    
+    state_size = (window_size - 1) * 2 + window_size + window_size + 2
 
     # Carga el modelo y ve si cargar uno o crear uno nuevo
     trader = AI_Trader_per(state_size,
                        epsilon_decay= epsilon_decay,
-                       learning_rate= learning_rate,
                        commission_per_trade= commission_per_trade,
                        gamma = gamma,
                        target_model_update = cada_cuanto_actualizar,
@@ -191,7 +196,12 @@ def main():
                        alpha=0.6,
                        beta_start=0.4,
                        beta_frames=100000,
-                       epsilon_priority=1e-6
+                       epsilon_priority=1e-6,
+                       scheduler_type='exponential_decay',
+                       learning_rate=learning_rate,
+                       lr_decay_rate=0.97,      # LR se multiplica por 0.96 cada lr_decay_steps
+                       lr_decay_steps=100,     # Cada 1000 pasos de entrenamiento
+                       lr_min=1e-6
                        )
 
     if cargar_modelo:
@@ -211,12 +221,13 @@ def main():
         print(f"\n{'='*30} Fold {fold + 1}/{n_folds} {'='*30}")
         start = fold * fold_size
         end = (fold + 1) * fold_size
-        fold_data = train_data.iloc[start:end].copy()
-        data_samples = len(fold_data) - 1
-        if(estados_vectorizados):
-            states = [state_creator_vectorized(fold_data, t, window_size) for t in range(data_samples)] # Usa la función vectorizada
-        else:
-            states = [state_creator(fold_data, t, window_size) for t in range(data_samples)]
+        
+        absolute_start = max(start, ventana_para_los_estados_de_datos)  # Garantiza que mínimo empiece desde fila 10
+        fold_data = train_data.iloc[absolute_start:end].copy()
+
+        data_samples = len(fold_data) - 1 
+
+        states = [state_creator_vectorized(fold_data, t , window_size) for t in range(data_samples)] # Usa la función vectorizada
 
         # Crea las estadísticas para guardar
         trader.profit_history = []
@@ -290,6 +301,7 @@ def main():
                 buy_price = current_price +  spread / 2 if action == 1 else current_price
                 sell_price = current_price - spread / 2 if action == 2 and len(trader.inventory) > 0 else current_price
                 
+                
                 if len(trader.inventory) > 0 and best_low > current_low:
                     best_low = current_low
                 elif len(trader.inventory) <= 0:
@@ -299,7 +311,7 @@ def main():
                 if action == 1 and not trader.inventory :  # Comprar
                     # Agrega el precio de compra al inventario
                     trader.inventory.append(buy_price)
-                    
+                    print("compro")
                     reward, reward_components = calculate_advanced_reward(
                     reward_system, 0, current_equity, peak_equity,
                     episode_returns_pips, is_trade_closed=False
@@ -327,7 +339,6 @@ def main():
                         profit_drawdrow_real = (pip_drawdrow_real * pip_value_eur_usd) - ( trader.commission_per_trade * lot_size) 
                         profit_dollars = (profit_pips * pip_value_eur_usd) - ( trader.commission_per_trade * lot_size) 
                         
-                   
                     # Coloco el profit en la variable (en pips)
                     total_profit_pips += profit_pips
                     # Usando la variable pip_value que ya definiste
@@ -364,6 +375,7 @@ def main():
                         losing_profits_pips.append(profit_pips)
                     if episode == episodes and fold == n_folds -1 : sell_points.append((timestamp, sell_price))
                         
+            
                     print(f"tiempo {t} de {data_samples} , episodio: {episode} ,recompensa:{reward:.2f} , por eleccion de ia  Venta a {sell_price:.5f}, Compra a {original_buy_price:.5f}, Profit (pips): {profit_pips:.2f}, Profit (USD): {profit_dollars:.2f}, total de dinero actual {current_equity:.2f}")
                     print("")
                     print(f"suma de recompensa {trader.total_rewards}")
@@ -430,17 +442,19 @@ def main():
                 
                     # Puedes imprimir o guardar la ganancia en dólares si lo deseas
                    #print("")
-
+                   
                     print(f"tiempo {t} de {data_samples} , episodio: {episode} ,recompensa:{reward:.2f}, Venta a {sell_price:.5f}, Compra a {original_buy_price:.5f}, Profit (pips): {profit_pips:.2f}, Profit (USD): {profit_dollars:.2f}, total de dinero actual {current_equity:.2f}")
     
                 
-                else:
+                #else:
                 # Para acciones que no cierran trades
-                    reward, _ = calculate_advanced_reward(
-                        reward_system, 0, current_equity, peak_equity,
-                        episode_returns_pips, is_trade_closed=False
-                        )
+                    #reward, _ = calculate_advanced_reward(
+                        #reward_system, 0, current_equity, peak_equity,
+                        #episode_returns_pips, is_trade_closed=False
+                        #)
+                 
                     
+                print(f"total de dinero actual {current_equity:.2f}")
                 
                 drawdown_real = (peak_equity_drawdrown_real - current_drawdown_real) / peak_equity_drawdrown_real if peak_equity_drawdrown_real != 0 else 0
                 # Calculo de drawdown como ($1070 - $1050) / $1070 ≈ 0.0187 o 1.87%.
@@ -450,14 +464,12 @@ def main():
               
                 drawdown_history_episode.append(drawdown)
                 drawdown_real_history_episode.append(drawdown_real)
-                # Recompensa para minimizar el drawdown
-                #reward -= 0.1 * sigmoid(drawdown * 10) - 0.05
-                # Pequeño ruido aleatorio para mejorar el aprendizaje
-                #reward += np.random.normal(0, trader.reward_noise_std)
+
                 
                 # Ver si termino el episodio
                 done = (t == data_samples - 1)
-         
+                print(f"recompensas {reward}")
+                trader.total_rewards += reward
                 trader.remember(state, action, reward, next_state, done)
                 state = next_state
                 profit_dollars = 0
@@ -474,9 +486,23 @@ def main():
             #if(episode % 5 == 0):
                # enviar_alerta(f"Jefe vamos en el episodio {episode} y el total de recompensa es de {trader.total_rewards:.2f}. con un total en dinero de: {price_format(profit_dollars_total)} ")
             reward_system.reset_episode()
+              
+   
             print("")
             print("===========================================================================")
-            print(f"Fin Episodio {episode}: Beneficio (pips)={total_profit_pips},,Beneficio (usd)={price_format(profit_dollars_total)}, Trades={trades_count},Peor balance={worse_equity} , Mejor Balance = {peak_equity}, wins={wins} ,Sharpe={sharpe:.2f},Maximo drawdown = {max_drawdown_real:.2%}, Drawdown={max_drawdown:.2%}, Accuracy={accuracy:.2%}")
+            print(f"""Fin Episodio {episode}: 
+                  Beneficio (pips)={total_profit_pips}
+                  Beneficio (usd)={price_format(profit_dollars_total)}
+                  Trades={trades_count}
+                  Peor balance={worse_equity}
+                  Mejor Balance = {peak_equity}
+                  wins={wins}
+                  Sharpe={sharpe:.2f}
+                  Maximo drawdown = {max_drawdown_real:.2%}
+                  Drawdown={max_drawdown:.2%}
+                  Accuracy={accuracy:.2%}
+                  """)
+            print("")
             print(f"total de recompensas: {trader.total_rewards:.2f} ")
             print("===========================================================================")
             print("")
@@ -491,10 +517,43 @@ def main():
             trader.avg_win_history.append(avg_win)
             trader.avg_loss_history.append(avg_loss)
             
-            if episode % 3 == 0:
+            if episode % 5 == 0  :
                 trader.plot_training_metrics(save_path=resultados_dir )
                 trader.save_model(os.path.join(resultados_dir, nombre_modelo_guardado))
-        
+                
+                if guardar_estadisticas_en_backend:
+                    status, result = upload_training_data(
+                    url = 'https://back-para-entrenamiento.onrender.com/api/upload',
+                    model_file_path="no",
+                    graph_image_paths=[],
+                    episode=episode,
+                    reward=trader.total_rewards,
+                    loss=avg_loss,
+                    profit_usd=current_equity,
+                    epsilon=trader.epsilon,
+                    drawdown=max_drawdown,
+                    hit_frequency=accuracy
+                    )
+                    
+                    print('Status:', status)
+                    print('Resultado:', result)
+                
+                if guardar_en_dropbox :
+                    local_file_path =[ f'resultados_cv/{nombre_modelo_guardado}.h5',
+                                      f'resultados_cv/{nombre_modelo_guardado}_params.txt' ,
+                                      f'resultados_cv/{nombre_modelo_guardado}_target.h5' ,
+                                      "resultados_cv/training_metrics.png"
+                                      ]
+                    
+                    for file in local_file_path:
+                        dropbox_destination_path = f"/{os.path.basename(file)}"
+                        with open(file, 'rb') as f:
+                            dbx.files_upload(f.read(), dropbox_destination_path, mode=dropbox.files.WriteMode.overwrite)
+                    
+                    print("Archivos subidos exitosamente a Dropbox.")
+            
+            
+
         if buy_points or sell_points:
             plot_trading_session(fold_data, buy_points, sell_points, symbol, intervalo, save_path=resultados_dir)
 
@@ -520,10 +579,9 @@ def main():
     print("\n{'='*30} Evaluación en Conjunto de Prueba {'='*30}")
     if len(test_data) > window_size:
         test_samples = len(test_data) - 1
-        if(estados_vectorizados):
-            test_states = np.array([state_creator_vectorized(test_data, t, window_size) for t in range(test_samples)]) # Usa la función vectorizada
-        else:
-            test_states = [state_creator(test_data, t, window_size) for t in range(test_samples)]
+   
+        test_states = np.array([state_creator_vectorized(test_data, t, window_size) for t in range(test_samples)]) # Usa la función vectorizada
+
         test_profit_pips = 0
         test_inventory = []
         test_trades = 0
@@ -550,9 +608,10 @@ def main():
             spread_test = test_data['spread'].iloc[t].item() * lot_size
             timestamp = test_data.index[t]
             
+            
             buy_price_test = current_price + spread_test / 2 if test_action == 1 else current_price
             sell_price_test = current_price - spread_test / 2 if test_action == 2 and len(test_inventory) > 0 else current_price
-
+            
             if test_action == 1 and not test_inventory:
                 test_inventory.append(buy_price_test)
             
@@ -566,23 +625,23 @@ def main():
                 
                 if (es_indice):
                     profit_test_pips = (sell_price_test - original_buy_price_test) 
-                    ticks = profit_pips / 0.25   
+                    ticks = profit_test_pips  / 0.25   
                     test_profit_dollars = ticks * tick_value * (lot_size / 1.0)
                 elif(es_forex): 
                     profit_test_pips = (sell_price_test - original_buy_price_test) * pip_multiplier
                     test_profit_dollars = profit_test_pips * pip_value_eur_usd
                 elif(es_metal):
                     profit_test_pips = (sell_price_test - original_buy_price_test) 
-                    test_profit_dollars = profit_test_pips * pip_value_eur_usd
-                                    
+                    test_profit_dollars = (profit_test_pips *pip_value_eur_usd ) -(trader.commission_per_trade * lot_size)
+
                 test_profit_pips += profit_test_pips
                 test_trades += 1
                 test_profit_dollars_total +=test_profit_dollars
                 if (es_indice):
                     # Calcula cuanto dinero tiene (considerando el lote)
-                    test_current_equity += test_profit_dollars * (1 - trader.commission_per_trade)
+                    test_current_equity += test_profit_dollars 
                 else:
-                    test_current_equity += test_profit_dollars * (1 - trader.commission_per_trade)
+                    test_current_equity += test_profit_dollars 
                 
                 test_returns_pips.append(profit_test_pips)
                 if profit_test_pips > 0:
@@ -606,16 +665,16 @@ def main():
                     test_profit_dollars = profit_test_pips * pip_value_eur_usd
                 elif(es_metal):
                     profit_test_pips = (sell_price_test - original_buy_price_test) 
-                    test_profit_dollars = profit_test_pips * pip_value_eur_usd
+                    test_profit_dollars = (profit_test_pips *pip_value_eur_usd ) - (trader.commission_per_trade * lot_size)
                                     
                 test_profit_pips += profit_test_pips
                 test_trades += 1
                 test_profit_dollars_total +=test_profit_dollars
                 if (es_indice):
                     # Calcula cuanto dinero tiene (considerando el lote)
-                    test_current_equity += test_profit_dollars * (1 - trader.commission_per_trade)
+                    test_current_equity += test_profit_dollars 
                 else:
-                    test_current_equity += test_profit_dollars * (1 - trader.commission_per_trade)
+                    test_current_equity += test_profit_dollars
                 
                 test_returns_pips.append(profit_test_pips)
                 if profit_test_pips > 0:

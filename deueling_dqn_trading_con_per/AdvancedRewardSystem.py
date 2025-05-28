@@ -18,18 +18,18 @@ class AdvancedRewardSystem:
         self.returns_buffer = deque(maxlen=100)
         self.equity_buffer = deque(maxlen=50)
         self.drawdown_buffer = deque(maxlen=30)
-        
+     
         # Pesos para componentes de recompensa
         self.weights = {
-            'profit': 1.0,           # Base profit
+            'profit': 2.0,           # Base profit
             'sharpe': 0.5,          # Sharpe ratio component
-            'drawdown': -2.0,       # Penalización por drawdown
+            'drawdown': -1.0,       # Penalización por drawdown
             'consistency': 0.3,     # Consistencia de retornos
             'risk_adjusted': 0.4,   # Retorno ajustado por riesgo
             'momentum': 0.2,        # Momentum de equity
-            'trade_quality': 0.3    # Calidad del trade
+            'trade_quality': 0.3    # Calidad del trade pero al ser un valor de 0.3 disminuye el retorno de negativo o positivo
         }
-    
+
     def calculate_reward(self, profit_dollars, current_equity, peak_equity, 
                         trade_returns_history, is_trade_closed=False):
         """
@@ -38,7 +38,9 @@ class AdvancedRewardSystem:
         reward_components = {}
         
         # 1. Componente base de profit (normalizado)
-        normalized_profit = profit_dollars / self.initial_balance
+       
+        #normalized_profit = profit_dollars / self.initial_balance
+        normalized_profit= profit_dollars
         reward_components['profit'] = normalized_profit
         
         # 2. Componente de Sharpe Ratio (solo si hay suficientes datos)
@@ -101,15 +103,16 @@ class AdvancedRewardSystem:
         if peak_equity <= 0:
             return 0
         
+        #current_drawdown=(100-88) / 100
         current_drawdown = (peak_equity - current_equity) / peak_equity
         
         # Penalización exponencial para drawdowns grandes
         if current_drawdown > 0:
             # Penalización más severa para drawdowns > 10%
             if current_drawdown > 0.1:
-                penalty = -np.exp(current_drawdown * 5) + 1
+                penalty = np.exp(current_drawdown * 5) + 1
             else:
-                penalty = -current_drawdown * 2
+                penalty = current_drawdown * 2
         else:
             penalty = 0.1  # Pequeña recompensa por estar en peak
         
@@ -148,7 +151,7 @@ class AdvancedRewardSystem:
         if volatility == 0:
             return 0
         
-        # Return to risk ratio
+        # Return to risk ratio        
         risk_adjusted = profit_dollars / (volatility * self.initial_balance)
         return np.tanh(risk_adjusted)  # Normalizar
     
@@ -175,6 +178,7 @@ class AdvancedRewardSystem:
         recent_returns = list(self.returns_buffer)[-5:]
         avg_recent_return = np.mean(recent_returns)
         
+        #avg_recent_return= -0.50
         # Recompensa trades que superan el promedio reciente
         if avg_recent_return != 0:
             relative_performance = profit_dollars / (abs(avg_recent_return) * self.initial_balance)
