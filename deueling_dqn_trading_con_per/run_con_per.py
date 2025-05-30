@@ -24,6 +24,8 @@ from state_creator import  state_creator_vectorized
 from AdvancedRewardSystem import AdvancedRewardSystem , calculate_advanced_reward
 from request_datos_backend import upload_training_data
 
+from indicadores import  add_ema200_distance
+
 DROPBOX_ACCESS_TOKEN = os.getenv("ACCESS_TOKEN_DROPBOX")
 
 dbx = dropbox.Dropbox(DROPBOX_ACCESS_TOKEN)
@@ -41,12 +43,14 @@ def dataset_loader_csv(csv_path):
     try:
         df = pd.read_csv(f"data/{csv_path}", sep='\t')  # Usa tabulador como separador
         df.columns = [col.strip('<>').lower() for col in df.columns]  # Limpia < > y normaliza nombres
-
+        ema_200_diferencia, _ = add_ema200_distance(df)
         # Verifica si existen las columnas necesarias
+        
         if 'date' not in df.columns:
             print("Error: La columna 'date' es obligatoria.")
             return None
-
+        if len(ema_200_diferencia) > 0:
+            df['ema_diference_close'] = ema_200_diferencia
         # Combina fecha y hora si existe la columna 'time'
         if 'time' in df.columns and df['time'].notnull().all():
             df['datetime'] = pd.to_datetime(df['date'] + ' ' + df['time'].astype(str))
@@ -64,7 +68,7 @@ def dataset_loader_csv(csv_path):
 
         # Selecciona columnas disponibles
         if 'time' in df.columns and 'close' in df.columns and 'spread' in df.columns and 'tick_volume' in df.columns:
-            return df[['time', 'close', 'tick_volume' , 'spread' , 'low']]
+            return df[['time', 'close', 'tick_volume' , 'spread' , 'low' , 'ema_diference_close']]
         elif 'close' in df.columns and 'tick_volume' in df.columns:
             return df[['close', 'tick_volume']]
         elif 'close' in df.columns:
@@ -128,7 +132,7 @@ def calculate_sharpe_ratio(returns, risk_free_rate=0.0):
 #comienzo del codigo
 def main():
     
-    nombre_csv = "XAUUSD_M15_2025_03_01_2025_03_31.csv"
+    nombre_csv = "XAUUSD_H1_2015_01_01_2024_05_31.csv"
        
     cargar_modelo = False
     modelo_existente = "resultados_cv/Oro_15_min_2025_03_01_2025_03_30_prueba"
@@ -155,9 +159,9 @@ def main():
     batch_size = 256
     epsilon_decay = 0.9995
     gamma = 0.95
-    cada_cuanto_actualizar = 30
+    cada_cuanto_actualizar = 50
     learning_rate = 0.001
-    window_size = 15
+    window_size = 12
 
     ventana_para_los_estados_de_datos = 4
 
@@ -184,7 +188,11 @@ def main():
     if 'time' in data.columns and data['time'].notnull().all():
         hora = data['time']
     
-    state_size = (window_size - 1) * 2 + window_size + window_size + 2
+    if 'ema_diference_close' in data.columns and data['ema_diference_close'].notnull().all():
+        alcista = data['ema_diference_close']
+    
+    
+    state_size = (window_size - 1) * 4 + window_size + window_size + 4
 
     # Carga el modelo y ve si cargar uno o crear uno nuevo
     trader = AI_Trader_per(state_size,
@@ -227,7 +235,7 @@ def main():
 
         data_samples = len(fold_data) - 1 
 
-        states = [state_creator_vectorized(fold_data, t , window_size) for t in range(data_samples)] # Usa la función vectorizada
+        states =[state_creator_vectorized(fold_data, t , window_size) for t in range(data_samples)] # Usa la función vectorizada
 
         # Crea las estadísticas para guardar
         trader.profit_history = []
@@ -250,7 +258,7 @@ def main():
         for episode in range(1, episodes + 1):
             print(f"Episodio: {episode}/{episodes}")
             
-            reward_system.weights = reward_system.get_adaptive_weights(episode, episodes)
+            reward_system.weights = reward_system.get_adaptive_weights(episode)
             # Crea las estadísticas del episodio
             state = states[0]
             total_profit_pips = 0
@@ -311,14 +319,22 @@ def main():
                 if action == 1 and not trader.inventory :  # Comprar
                     # Agrega el precio de compra al inventario
                     trader.inventory.append(buy_price)
+                    
+                    if alcista.iloc[t] > 0:
+                        reward += 0.01
+                    else:
+                        reward += -0.01
+                    
+                    
                     print("compro")
-                    reward, reward_components = calculate_advanced_reward(
-                    reward_system, 0, current_equity, peak_equity,
-                    episode_returns_pips, is_trade_closed=False
-                    )
-           
+                    print(alcista.iloc[t])
+                    
+                
                     if episode == episodes and fold == n_folds -1 : buy_points.append((timestamp, buy_price))
-
+                
+                elif action == 0 and len(trader.inventory) <= 0 and alcista.iloc[t] > 0:
+                    reward += -0.01
+                    
                 # Si la accion de la ia es igual a 2 y hay un trade abierto vende esa accion
                 elif action == 2 and len(trader.inventory) > 0:  # Vender
                     # Toma el precio que compro el activo
@@ -521,7 +537,7 @@ def main():
                 trader.plot_training_metrics(save_path=resultados_dir )
                 trader.save_model(os.path.join(resultados_dir, nombre_modelo_guardado))
                 
-                if guardar_estadisticas_en_backend:
+                if guardar_estadisticas_en_backend == True:
                     status, result = upload_training_data(
                     url = 'https://back-para-entrenamiento.onrender.com/api/upload',
                     model_file_path="no",

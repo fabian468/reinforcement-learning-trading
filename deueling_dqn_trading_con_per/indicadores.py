@@ -23,3 +23,14 @@ def macd(data, fast_period=12, slow_period=26, signal_period=9):
     signal_line = macd_line.ewm(span=signal_period, adjust=False).mean()
     return macd_line, signal_line
 
+def add_ema200_distance(data):
+    # Calcula la EMA de 200 periodos
+    ema_200 = data['close'].ewm(span=200, adjust=False).mean()
+    # Distancia entre el cierre y la EMA200
+    
+    dist_ema200 = data['close'] - ema_200
+    # También puedes normalizar la distancia, si lo deseas
+    # data['dist_ema200_pct'] = data['dist_ema200'] / data['ema200'] * 100
+
+    return dist_ema200 , ema_200
+

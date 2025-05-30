@@ -14,7 +14,7 @@ from sklearn.preprocessing import StandardScaler
 
 load_dotenv() 
 
-from indicadores import  rsi , macd
+from indicadores import  rsi , macd , add_ema200_distance
 
 #timestep = 1 window_size = 15
 #lo que pasa es que me rellena con 0 cuando no tiene suficientes datos para calcular el rsi y el macd 
@@ -45,5 +45,26 @@ def state_creator_vectorized(data, timestep, window_size):
     hour_sin = np.sin(2 * np.pi * hour / 24)
     hour_cos = np.cos(2 * np.pi * hour / 24)
     state.extend([hour_sin, hour_cos])
+    
+    # EMA200 y distancia del close a la EMA200
+    dist_ema200, ema_200 = add_ema200_distance(windowed_data)
+
+   # Seleccionar y escalar los últimos valores correspondientes al window
+    dist_ema_window = dist_ema200[-window_size:].fillna(0).values
+    ema_200_window = ema_200[-window_size:].bfill().fillna(0).values
+    
+    dist_scaled = StandardScaler().fit_transform(dist_ema_window.reshape(-1, 1)).flatten()
+    ema_scaled = StandardScaler().fit_transform(ema_200_window.reshape(-1, 1)).flatten()
+    
+    state.extend(dist_scaled)
+    state.extend(ema_scaled)
 
     return np.array(state).reshape(1, -1)
+
+#estoy agregando diferencia de close de ahora con el anterior 
+#diferencia de volumen actual con el anterior
+#el rsi
+#el macd
+#hora
+#diferencia de ema200 con el close actual
+#

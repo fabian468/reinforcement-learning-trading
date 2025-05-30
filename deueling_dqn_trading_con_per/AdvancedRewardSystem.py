@@ -21,9 +21,9 @@ class AdvancedRewardSystem:
      
         # Pesos para componentes de recompensa
         self.weights = {
-            'profit': 2.0,           # Base profit
+            'profit': 1.5,           # Base profit
             'sharpe': 0.5,          # Sharpe ratio component
-            'drawdown': -1.0,       # Penalización por drawdown
+            'drawdown': -1.5,       # Penalización por drawdown
             'consistency': 0.3,     # Consistencia de retornos
             'risk_adjusted': 0.4,   # Retorno ajustado por riesgo
             'momentum': 0.2,        # Momentum de equity
@@ -36,6 +36,8 @@ class AdvancedRewardSystem:
         Calcula recompensa multi-objetivo optimizada
         """
         reward_components = {}
+        
+        #print(f"Pesos multiplicadores de r:{self.weights}")
         
         # 1. Componente base de profit (normalizado)
        
@@ -74,8 +76,12 @@ class AdvancedRewardSystem:
             reward_components['trade_quality'] = 0
         
         # Calcular recompensa final ponderada
-        total_reward = sum(self.weights[component] * value 
-                          for component, value in reward_components.items())
+        total_reward = 0.0
+        for component, value in reward_components.items():
+            weight = self.weights.get(component, 0.0)
+            weighted_value = weight * value
+            #print(f"{component}: valor={value:.4f}, peso={weight:.4f}, ponderado={weighted_value:.4f}")
+            total_reward += weighted_value
         
         # Actualizar buffers
         self._update_buffers(profit_dollars, current_equity, current_equity/peak_equity if peak_equity > 0 else 1)
@@ -110,7 +116,7 @@ class AdvancedRewardSystem:
         if current_drawdown > 0:
             # Penalización más severa para drawdowns > 10%
             if current_drawdown > 0.1:
-                penalty = np.exp(current_drawdown * 5) + 1
+                penalty = (current_drawdown * 5) + 1
             else:
                 penalty = current_drawdown * 2
         else:
@@ -193,22 +199,19 @@ class AdvancedRewardSystem:
         self.equity_buffer.append(current_equity)
         self.drawdown_buffer.append(drawdown_ratio)
     
-    def get_adaptive_weights(self, episode, max_episodes):
+    def get_adaptive_weights(self, episode):
         """Ajusta pesos dinámicamente durante el entrenamiento"""
-        progress = episode / max_episodes
-        
-        # Al inicio, priorizar exploración y minimizar riesgo
         # Al final, priorizar profit y sharpe
         adaptive_weights = self.weights.copy()
         
-        if progress < 0.3:  # Primeras 30% episodios
-            adaptive_weights['drawdown'] *= 1.5  # Más conservador
-            adaptive_weights['consistency'] *= 1.3
-            adaptive_weights['profit'] *= 0.8
-        elif progress > 0.7:  # Últimos 30% episodios
-            adaptive_weights['profit'] *= 1.2
-            adaptive_weights['sharpe'] *= 1.3
-            adaptive_weights['drawdown'] *= 0.8
+        if episode % 30 == 0:
+            adaptive_weights['drawdown'] += -0.5  # Más conservador
+            adaptive_weights['consistency'] += 0.8
+            adaptive_weights['profit'] += 0.8
+        elif episode % 55 == 0:  # Últimos 30% episodios
+            adaptive_weights['profit'] += 1.5
+            adaptive_weights['sharpe'] += 1.3
+            adaptive_weights['drawdown'] += -1.1
         
         return adaptive_weights
     
@@ -217,7 +220,7 @@ class AdvancedRewardSystem:
         self.returns_buffer.clear()
         self.equity_buffer.clear()
         self.drawdown_buffer.clear()
-
+        
 
 # Función auxiliar para integrar en tu código existente
 def calculate_advanced_reward(reward_system, profit_dollars, current_equity, peak_equity,

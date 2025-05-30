@@ -239,18 +239,18 @@ class AI_Trader_per():
         x = tf.keras.layers.Dense(32, kernel_regularizer=tf.keras.regularizers.l2(0.001))(x)
         x = tf.keras.layers.BatchNormalization()(x)  # Batch Normalization
         x = tf.keras.layers.LeakyReLU(negative_slope=0.1)(x)  # Activación LeakyReLU con pendiente 0.1 para valores negativos
-        x = tf.keras.layers.Dropout(0.2)(x)  # Agregamos Dropout con tasa del 20%
+        x = tf.keras.layers.Dropout(0.1)(x)  # Agregamos Dropout con tasa del 20%
     
         # Capa adicional con regularización L2
         x = tf.keras.layers.Dense(32, kernel_regularizer=tf.keras.regularizers.l2(0.001))(x)
         x = tf.keras.layers.BatchNormalization()(x)  # Batch Normalization
         x = tf.keras.layers.LeakyReLU(negative_slope=0.1)(x)  # Activación LeakyReLU con pendiente 0.1 para valores negativos
-        x = tf.keras.layers.Dropout(0.2)(x)  # Agregamos Dropout con tasa del 20%
+        x = tf.keras.layers.Dropout(0.1)(x)  # Agregamos Dropout con tasa del 20%
         
         x = tf.keras.layers.Dense(64, kernel_regularizer=tf.keras.regularizers.l2(0.001))(x)
         x = tf.keras.layers.BatchNormalization()(x)  # Batch Normalization
         x = tf.keras.layers.LeakyReLU(negative_slope=0.1)(x)  # Activación LeakyReLU con pendiente 0.1 para valores negativos
-        x = tf.keras.layers.Dropout(0.2)(x)  # Agregamos Dropout con tasa del 20%
+        x = tf.keras.layers.Dropout(0.1)(x)  # Agregamos Dropout con tasa del 20%
     
         x = tf.keras.layers.Dense(64, kernel_regularizer=tf.keras.regularizers.l2(0.001))(x)
         x = tf.keras.layers.BatchNormalization()(x)  # Batch Normalization
