@@ -134,35 +134,38 @@ def main():
     
     nombre_csv = "XAUUSD_H1_2015_01_01_2024_05_31.csv"
        
-    cargar_modelo = False
-    modelo_existente = "resultados_cv/Oro_15_min_2025_03_01_2025_03_30_prueba"
+    
+    cargar_modelo = True
+    modelo_existente = "resultados_cv/model_XAUUSD_H1_2015_01_01_2024_05_31.csv"
+    
+    cargar_memoria_buffer = True
     
     guardar_estadisticas_en_backend = True   
     guardar_en_dropbox = False
     
+    
     symbol = "GOLD"
     intervalo = "daily"
-    
-    
-    nombre_modelo_guardado = "Oro_15_min_2025_03_01_2025_03_30_prueba"
+
+
+    nombre_modelo_guardado = "model_" + nombre_csv
     
     
     es_indice = False
     es_forex = False
     es_metal = True
     tick_value = 5  
-    pip_multiplier = 10000  # Para el Nasdaq (2 decimales)
+    pip_multiplier = 10000  
     
   
-    episodes = 1000
+    episodes =30
     n_folds = 3
     batch_size = 256
     epsilon_decay = 0.9995
     gamma = 0.95
-    cada_cuanto_actualizar = 50
+    cada_cuanto_actualizar = 60
     learning_rate = 0.001
-    window_size = 12
-
+    window_size = 3
     ventana_para_los_estados_de_datos = 4
 
     balance_first = 100 # dinero inicial
@@ -214,7 +217,7 @@ def main():
 
     if cargar_modelo:
         try:
-            trader.load_model(modelo_existente)
+            trader.load_model(modelo_existente , cargar_memoria_buffer)
             print("Modelo cargado exitosamente")
         except Exception as e:
             print(f"Error al cargar el modelo {modelo_existente}: {str(e)}")
@@ -227,7 +230,7 @@ def main():
     # Comienza el entrenamiento del primero fold
     for fold in range(n_folds):
         print(f"\n{'='*30} Fold {fold + 1}/{n_folds} {'='*30}")
-        start = fold * fold_size
+        start = fold  * fold_size
         end = (fold + 1) * fold_size
         
         absolute_start = max(start, ventana_para_los_estados_de_datos)  # Garantiza que mínimo empiece desde fila 10
@@ -324,12 +327,7 @@ def main():
                         reward += 0.01
                     else:
                         reward += -0.01
-                    
-                    
-                    print("compro")
-                    print(alcista.iloc[t])
-                    
-                
+                                       
                     if episode == episodes and fold == n_folds -1 : buy_points.append((timestamp, buy_price))
                 
                 elif action == 0 and len(trader.inventory) <= 0 and alcista.iloc[t] > 0:
@@ -469,9 +467,7 @@ def main():
                         #episode_returns_pips, is_trade_closed=False
                         #)
                  
-                    
-                print(f"total de dinero actual {current_equity:.2f}")
-                
+                                    
                 drawdown_real = (peak_equity_drawdrown_real - current_drawdown_real) / peak_equity_drawdrown_real if peak_equity_drawdrown_real != 0 else 0
                 # Calculo de drawdown como ($1070 - $1050) / $1070 ≈ 0.0187 o 1.87%.
                 drawdown = (peak_equity - current_equity) / peak_equity if peak_equity != 0 else 0
@@ -484,7 +480,6 @@ def main():
                 
                 # Ver si termino el episodio
                 done = (t == data_samples - 1)
-                print(f"recompensas {reward}")
                 trader.total_rewards += reward
                 trader.remember(state, action, reward, next_state, done)
                 state = next_state
@@ -533,7 +528,7 @@ def main():
             trader.avg_win_history.append(avg_win)
             trader.avg_loss_history.append(avg_loss)
             
-            if episode % 5 == 0  :
+            if episode % 1 == 0  :
                 trader.plot_training_metrics(save_path=resultados_dir )
                 trader.save_model(os.path.join(resultados_dir, nombre_modelo_guardado))
                 

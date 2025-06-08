@@ -9,6 +9,7 @@ import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
 import os
+import pickle
 
 from SumTree_class import SumTree
 
@@ -236,32 +237,27 @@ class AI_Trader_per():
         x = tf.keras.layers.LayerNormalization()(input_layer)
         
         # Capa densa con Batch Normalization y regularización L2
-        x = tf.keras.layers.Dense(32, kernel_regularizer=tf.keras.regularizers.l2(0.001))(x)
+        x = tf.keras.layers.Dense(512, kernel_regularizer=tf.keras.regularizers.l2(0.001))(x)
         x = tf.keras.layers.BatchNormalization()(x)  # Batch Normalization
         x = tf.keras.layers.LeakyReLU(negative_slope=0.1)(x)  # Activación LeakyReLU con pendiente 0.1 para valores negativos
         x = tf.keras.layers.Dropout(0.1)(x)  # Agregamos Dropout con tasa del 20%
     
         # Capa adicional con regularización L2
-        x = tf.keras.layers.Dense(32, kernel_regularizer=tf.keras.regularizers.l2(0.001))(x)
+        x = tf.keras.layers.Dense(256, kernel_regularizer=tf.keras.regularizers.l2(0.001))(x)
         x = tf.keras.layers.BatchNormalization()(x)  # Batch Normalization
         x = tf.keras.layers.LeakyReLU(negative_slope=0.1)(x)  # Activación LeakyReLU con pendiente 0.1 para valores negativos
         x = tf.keras.layers.Dropout(0.1)(x)  # Agregamos Dropout con tasa del 20%
-        
-        x = tf.keras.layers.Dense(64, kernel_regularizer=tf.keras.regularizers.l2(0.001))(x)
-        x = tf.keras.layers.BatchNormalization()(x)  # Batch Normalization
-        x = tf.keras.layers.LeakyReLU(negative_slope=0.1)(x)  # Activación LeakyReLU con pendiente 0.1 para valores negativos
-        x = tf.keras.layers.Dropout(0.1)(x)  # Agregamos Dropout con tasa del 20%
-    
-        x = tf.keras.layers.Dense(64, kernel_regularizer=tf.keras.regularizers.l2(0.001))(x)
-        x = tf.keras.layers.BatchNormalization()(x)  # Batch Normalization
-        x = tf.keras.layers.LeakyReLU(negative_slope=0.1)(x)  # Activación LeakyReLU con pendiente 0.1 para valores negativos
-        x = tf.keras.layers.Dropout(0.2)(x)  # Agregamos Dropout con tasa del 20%
         
         x = tf.keras.layers.Dense(128, kernel_regularizer=tf.keras.regularizers.l2(0.001))(x)
         x = tf.keras.layers.BatchNormalization()(x)  # Batch Normalization
         x = tf.keras.layers.LeakyReLU(negative_slope=0.1)(x)  # Activación LeakyReLU con pendiente 0.1 para valores negativos
-        x = tf.keras.layers.Dropout(0.2)(x)  # Agregamos Dropout con tasa del 20%
+        x = tf.keras.layers.Dropout(0.1)(x)  # Agregamos Dropout con tasa del 20%
     
+        x = tf.keras.layers.Dense(64, kernel_regularizer=tf.keras.regularizers.l2(0.001))(x)
+        x = tf.keras.layers.BatchNormalization()(x)  # Batch Normalization
+        x = tf.keras.layers.LeakyReLU(negative_slope=0.1)(x)  # Activación LeakyReLU con pendiente 0.1 para valores negativos
+        x = tf.keras.layers.Dropout(0.2)(x)  # Agregamos Dropout con tasa del 20%
+        
         # Valor (value stream) con regularización L2
         value_stream = tf.keras.layers.Dense(128, kernel_regularizer=tf.keras.regularizers.l2(0.001))(x)
         value_stream = tf.keras.layers.BatchNormalization()(value_stream)  # Batch Normalization
@@ -427,11 +423,20 @@ class AI_Trader_per():
             f.write(f"lr_min:{self.lr_min}\n")
             f.write(f"initial_learning_rate:{self.initial_learning_rate}\n")
             f.write(f"current_learning_rate:{self.learning_rate}\n")
-        print(f"Modelo guardado como {name}.h5 y parámetros en {name}_params.txt")
-        
+            
+        with open(f"{name}_memory.pkl", "wb") as f:
+            pickle.dump(self.memory, f)
 
-    def load_model(self, name):
+        print(f"Modelo guardado como {name}.h5, parámetros en {name}_params.txt y memoria en {name}_memory.pkl")
+    
+
+    def load_model(self, name , cargar_memoria_buffer):
         try:
+            if cargar_memoria_buffer:
+                with open(f"{name}_memory.pkl", "rb") as f:
+                    self.memory = pickle.load(f)
+                    print("Memoria cargada")
+                    
             self.model = tf.keras.models.load_model(f"{name}.h5", custom_objects={'combine_value_and_advantage': combine_value_and_advantage}, compile=False)
             self.model.compile(loss='mse', optimizer=tf.keras.optimizers.Adam(learning_rate=self.learning_rate))
             if self.use_double_dqn and tf.io.gfile.exists(f"{name}_target.h5"):
