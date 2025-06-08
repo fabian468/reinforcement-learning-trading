@@ -5,6 +5,12 @@ Created on Thu May 22 23:17:18 2025
 @author: fabia
 """
 
+"""
+el problema con el drawndown es que cuando baja el total del balances 
+un 10% la penalizacion es constantemente mayor 
+la solucion seria o eliminar eso o darle un peso menor  o 
+mandar el current equity actual y el peak equity actual calculado con el profit de solo esa accion
+"""
 import numpy as np
 from collections import deque
 import math
@@ -18,12 +24,13 @@ class AdvancedRewardSystem:
         self.returns_buffer = deque(maxlen=100)
         self.equity_buffer = deque(maxlen=50)
         self.drawdown_buffer = deque(maxlen=30)
+        self.previous_equity = initial_balance  # Para calcular drawdown incremental
      
         # Pesos para componentes de recompensa
         self.weights = {
             'profit': 1.5,           # Base profit
             'sharpe': 0.5,          # Sharpe ratio component
-            'drawdown': -1.5,       # Penalización por drawdown
+            'drawdown': 1.2,       # Penalización por drawdown
             'consistency': 0.3,     # Consistencia de retornos
             'risk_adjusted': 0.4,   # Retorno ajustado por riesgo
             'momentum': 0.2,        # Momentum de equity
@@ -105,22 +112,23 @@ class AdvancedRewardSystem:
         return normalized_sharpe
     
     def _calculate_drawdown_penalty(self, current_equity, peak_equity):
-        """Penalización sofisticada por drawdown"""
-        if peak_equity <= 0:
-            return 0
+        """Penalización basada en el drawdown incremental de la acción"""
         
-        #current_drawdown=(100-88) / 100
-        current_drawdown = (peak_equity - current_equity) / peak_equity
+        if self.previous_equity <= 0:
+            self.previous_equity = current_equity
+            return 0.0
         
-        # Penalización exponencial para drawdowns grandes
-        if current_drawdown > 0:
-            # Penalización más severa para drawdowns > 10%
-            if current_drawdown > 0.1:
-                penalty = (current_drawdown * 5) + 1
-            else:
-                penalty = current_drawdown * 2
-        else:
-            penalty = 0.1  # Pequeña recompensa por estar en peak
+        # Calculamos el RETORNO incremental (no drawdown)
+        incremental_return = (current_equity - self.previous_equity) / self.previous_equity
+
+        if incremental_return < 0:  # Hay pérdida (retorno negativo)
+            # Penalizamos las pérdidas usando el valor absoluto
+            penalty = incremental_return * 1.2
+        else:  # Hay ganancia o se mantiene igual
+            penalty = 0.1
+            
+        # Actualizamos el equity anterior
+        self.previous_equity = current_equity
         
         return penalty
     

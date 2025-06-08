@@ -375,7 +375,7 @@ def main():
                     # Agrega el retorno al retorno del episodio cada profit (en pips)
                     episode_returns_pips.append(profit_pips)
                     
-                    reward, reward_components = calculate_advanced_reward(
+                    reward, _ = calculate_advanced_reward(
                             reward_system, profit_dollars, current_equity, peak_equity,
                             episode_returns_pips, is_trade_closed=True
                         )
