@@ -249,5 +249,3 @@ def calculate_advanced_reward(reward_system, profit_dollars, current_equity, pea
     
     return reward, components
 
-
-# Ejemplo de uso en tu código principal:

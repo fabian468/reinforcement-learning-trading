@@ -23,14 +23,14 @@ def combine_value_and_advantage(inputs):
 class AI_Trader_per():
     def __init__(self,
                  state_size,
-                 action_space=3,
+                 action_space=5,
                  model_name="AITrader",
                  random_market_event_probability=0.01,
                  spread=0.20,
                  commission_per_trade=0.07,
                  gamma=0.95,
                  epsilon=0.9,
-                 epsilon_final=0.2,
+                 epsilon_final=0.1,
                  epsilon_decay=0.9999,
                  use_double_dqn=True,
                  target_model_update=100,
@@ -42,7 +42,7 @@ class AI_Trader_per():
                  epsilon_priority=1e-6, # Pequeña constante para evitar probabilidad cero
                  # Nuevos parámetros para el scheduler
                  scheduler_type='exponential_decay',  # 'exponential_decay', 'cosine_decay', 'polynomial_decay', 'reduce_on_plateau'
-                 lr_decay_rate=0.96,        # Factor de decaimiento para exponential
+                 lr_decay_rate=0.97,        # Factor de decaimiento para exponential
                  lr_decay_steps=1000,       # Pasos entre decaimientos
                  lr_min=1e-6,              # Learning rate mínimo
                  patience=10,              # Para reduce_on_plateau
@@ -54,6 +54,7 @@ class AI_Trader_per():
         self.memory = SumTree(memory_size) # Usamos SumTree ahora
         self.memory_size = memory_size
         self.inventory = []
+        self.inventory_sell = []
         self.model_name = model_name
         self.reward_noise_std = 0.01
         self.random_market_event_probability = random_market_event_probability
@@ -96,6 +97,7 @@ class AI_Trader_per():
 
         self.profit_history = []
         self.rewards_history = []
+        self.rewards_history_episode = []
         self.epsilon_history = []
         self.trades_history = []
         self.loss_history = []
@@ -306,94 +308,135 @@ class AI_Trader_per():
                 target_q = reward + self.gamma * self.target_model.predict(next_state, verbose=0)[0][next_action]
             else:
                 target_q = reward + self.gamma * np.max(self.model.predict(next_state, verbose=0)[0])
+                
         error = np.abs(target_q - q_value)
         priority = self._get_priority(error)
         self.memory.add(priority, (state, action, reward, next_state, done))
         
     def batch_train(self, batch_size):
+        # Inicialización para la extracción del batch
         tree_idx = np.empty((batch_size,), dtype=np.int32)
-        batch = np.empty((batch_size,), dtype=object)
+        batch_data = [] # Usamos una lista temporal para recolectar las tuplas de experiencia
         priorities = np.empty((batch_size,), dtype=np.float32)
         segment = self.memory.total_priority / batch_size
+        
+        # Actualización del parámetro beta para PER
         self.beta = min(1., self.beta + (1 - self.beta_start) / self.beta_frames)
-
+    
+        # Extraer el batch de la memoria priorizada
         for i in range(batch_size):
             a = segment * i
             b = segment * (i + 1)
             s = random.uniform(a, b)
             idx, p, data = self.memory.get_leaf(s)
             tree_idx[i] = idx
-            batch[i] = data
+            batch_data.append(data) # data es la tupla (s, a, r, ns, d)
             priorities[i] = p
-
-        states = np.array([item[0] for item in batch])
-        next_states = np.array([item[3] for item in batch])
-        rewards = np.array([item[2] for item in batch])
-        actions = np.array([item[1] for item in batch])
-        dones = np.array([item[4] for item in batch])
-
+    
+        # Desempaquetar el batch de manera vectorizada
+        # zip(*) transforma una lista de tuplas en tuplas de listas
+        # Ejemplo: [(s1,a1,r1), (s2,a2,r2)] -> ([s1,s2], [a1,a2], [r1,r2])
+        states_list, actions_list, rewards_list, next_states_list, dones_list = zip(*batch_data)
+    
+        states = np.array(states_list)
+        actions = np.array(actions_list, dtype=np.int32)
+        rewards = np.array(rewards_list, dtype=np.float32)
+        next_states = np.array(next_states_list)
+        dones = np.array(dones_list, dtype=np.bool_)
+    
+        # Reducir dimensiones si es necesario (ej. para imágenes que vienen como (batch, 1, H, W))
         if states.ndim > 2:
             states = np.squeeze(states, axis=1)
         if next_states.ndim > 2:
             next_states = np.squeeze(next_states, axis=1)
-
+    
+        # Predicciones de los modelos
+        # verbose=0 para no imprimir el progreso de predicción
         target_q = self.model.predict(states, verbose=0)
         next_q = self.model.predict(next_states, verbose=0)
         target_next_q = self.target_model.predict(next_states, verbose=0)
-
+    
+        # --- Cálculo de los valores objetivo (TD target) de forma vectorizada ---
+        # Obtener los Q-valores de las mejores acciones del siguiente estado
+        if self.use_double_dqn:
+            # El modelo principal elige la acción óptima en el siguiente estado
+            best_actions = np.argmax(next_q, axis=1)
+            # El target model evalúa el Q-valor de esa acción
+            target_next_q_values = target_next_q[np.arange(batch_size), best_actions]
+        else:
+            # DQN estándar: el target model elige y evalúa la mejor acción
+            target_next_q_values = np.max(next_q, axis=1)
+    
+        # Guardar los Q-valores originales para las acciones tomadas para el cálculo del error TD
+        old_q_values_for_actions = target_q[np.arange(batch_size), actions]
+    
+        # Calcular los Q-valores objetivo para todas las transiciones
+        # Inicialmente, el objetivo para la acción tomada es la recompensa si el episodio terminó
+        # O recompensa + gamma * max_q_next si no terminó
+        q_targets_for_actions = rewards + self.gamma * target_next_q_values
+        
+        # Si 'done' es True, el objetivo es simplemente la recompensa (no hay futuro)
+        q_targets_for_actions = np.where(dones, rewards, q_targets_for_actions)
+    
+        # Actualizar la matriz target_q con los nuevos valores objetivo solo para las acciones tomadas
+        # Esto asegura que solo las Q-valores correspondientes a las acciones realizadas se actualicen
+        target_q[np.arange(batch_size), actions] = q_targets_for_actions
+    
+        # Calcular el error TD de forma vectorizada
+        errors = np.abs(q_targets_for_actions - old_q_values_for_actions)
+    
+        # Actualizar las prioridades en la memoria (esto aún requiere un bucle debido a la estructura del SumTree)
         for i in range(batch_size):
-            old_val = target_q[i, actions[i]]
-            if dones[i]:
-                target_q[i, actions[i]] = rewards[i]
-            else:
-                if self.use_double_dqn:
-                    best_action = np.argmax(next_q[i])
-                    target_q[i, actions[i]] = rewards[i] + self.gamma * target_next_q[i, best_action]
-                else:
-                    target_q[i, actions[i]] = rewards[i] + self.gamma * np.max(next_q[i])
-            # Calcular el error TD para actualizar la prioridad
-            error = np.abs(target_q[i, actions[i]] - old_val)
-            self.memory.update(tree_idx[i], self._get_priority(error))
-
-        # Calcular los pesos de importancia
+            self.memory.update(tree_idx[i], self._get_priority(errors[i]))
+    
+        # Calcular los pesos de importancia (IS weights)
         sampling_probabilities = priorities / self.memory.total_priority
         weights = np.power(self.memory_size * sampling_probabilities, -self.beta)
-        weights /= weights.max()
-
-        # Actualizar learning rate solo para reduce_on_plateau y manual
+        weights /= weights.max() # Normalizar pesos
+    
+        # Actualizar learning rate si el scheduler es 'reduce_on_plateau' o 'constant'
         if self.scheduler_type in ['reduce_on_plateau', 'constant']:
             self.update_learning_rate()
-
+    
+        # Entrenar el modelo con los pesos de importancia
         history = self.model.fit(states, target_q, sample_weight=weights, epochs=1, verbose=0)
         current_loss = history.history['loss'][0]
         self.loss_history.append(current_loss)
         
-        # Obtener el learning rate actual del optimizador
+        # Obtener el learning rate actual del optimizador (más robusto)
         try:
-            if hasattr(self.model.optimizer.learning_rate, 'numpy'):
-                current_lr = float(self.model.optimizer.learning_rate.numpy())
-            else:
-                current_lr = float(self.model.optimizer.learning_rate)
+            current_lr_obj = self.model.optimizer.learning_rate
+            if hasattr(current_lr_obj, 'numpy'):
+                current_lr = float(current_lr_obj.numpy())
+            elif hasattr(current_lr_obj, '__call__'): # Para tf.keras.optimizers.schedules
+                current_lr = float(current_lr_obj(self.model.optimizer.iterations).numpy())
+            else: # Para otros casos, asumir que es un float directamente
+                current_lr = float(current_lr_obj)
             self.learning_rate = current_lr
-        except:
+        except Exception: # Captura cualquier excepción para el fallback
             # Fallback: usar el LR calculado manualmente
             if self.scheduler_type not in ['reduce_on_plateau', 'constant']:
                 self.learning_rate = self.get_scheduled_lr(self.step_counter)
-        
-        # Actualizar learning rate basado en el loss si usamos reduce_on_plateau
+                
+        # Actualizar learning rate basado en el loss si se usa reduce_on_plateau
         self.update_learning_rate_on_plateau(current_loss)
-        
+            
         # Guardar en historial
         self.lr_history.append(self.learning_rate)
-
+    
+        # Actualizar el modelo objetivo (target model) si se usa Double DQN
         if self.use_double_dqn and self.step_counter % self.target_model_update == 0:
             self.target_model.set_weights(self.model.get_weights())
-            print(f"Modelo objetivo actualizado en el paso {self.step_counter}")
-
+            
+        # Incrementar el contador de pasos
         self.step_counter += 1
+        
+        # Decaimiento de epsilon para la exploración
         if self.epsilon > self.epsilon_final:
             self.epsilon *= self.epsilon_decay
-
+            
+        return current_loss
+            
     def trade(self, state):
         if random.random() <= self.epsilon:
             return random.randrange(self.action_space)
@@ -531,7 +574,7 @@ class AI_Trader_per():
         axs[2, 1].grid(True)
         axs[2, 1].legend()
 
-        axs[3, 0].plot(episodes, self.rewards_history[:min_length], label='Recompensa por Episodio', color='blue')
+        axs[3, 0].plot(episodes, self.rewards_history[:min_length], label='Recompensa total', color='blue')
         axs[3, 0].set_ylabel('Recompensa')
         axs[3, 0].grid(True)
         axs[3, 0].legend()
@@ -559,7 +602,10 @@ class AI_Trader_per():
         axs[4, 0].grid(True)
         axs[4, 0].set_title('Loss vs Learning Rate')
 
-        axs[4, 1].axis('off') # Para la celda vacía en la última fila
+        axs[4, 1].plot(episodes, self.rewards_history_episode[:min_length], label='Recompensa por episodios', color='green')
+        axs[4, 1].set_ylabel('Recompensa')
+        axs[4, 1].grid(True)
+        axs[4, 1].legend()
 
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         plt.savefig(os.path.join(save_path, 'training_metrics.png'), dpi=300, bbox_inches='tight')
@@ -567,7 +613,7 @@ class AI_Trader_per():
         
     def print_scheduler_info(self):
         """Imprime información sobre el scheduler configurado"""
-        print(f"\n=== Configuración del Learning Rate Scheduler ===")
+        print("\n=== Configuración del Learning Rate Scheduler ===")
         print(f"Tipo de scheduler: {self.scheduler_type}")
         print(f"Learning rate inicial: {self.initial_learning_rate}")
         print(f"Learning rate actual: {self.learning_rate}")

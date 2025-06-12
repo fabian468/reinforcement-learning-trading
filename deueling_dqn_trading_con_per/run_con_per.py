@@ -7,7 +7,6 @@ Created on Wed Apr 30 00:25:00 2025
 import math
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from dotenv import load_dotenv
 import os
 import dropbox
@@ -23,12 +22,16 @@ from dueling_dqn_con_per import AI_Trader_per
 from state_creator import  state_creator_vectorized 
 from AdvancedRewardSystem import AdvancedRewardSystem , calculate_advanced_reward
 from request_datos_backend import upload_training_data
+from plot_stadist import plot_trading_session
 
 from indicadores import  add_ema200_distance
 
 DROPBOX_ACCESS_TOKEN = os.getenv("ACCESS_TOKEN_DROPBOX")
 
 dbx = dropbox.Dropbox(DROPBOX_ACCESS_TOKEN)
+
+import tensorflow as tf
+print(tf.config.list_physical_devices('GPU'))
 
 def sigmoid(x):
     return 1 / (1 + math.exp(-x))
@@ -68,7 +71,7 @@ def dataset_loader_csv(csv_path):
 
         # Selecciona columnas disponibles
         if 'time' in df.columns and 'close' in df.columns and 'spread' in df.columns and 'tick_volume' in df.columns:
-            return df[['time', 'close', 'tick_volume' , 'spread' , 'low' , 'ema_diference_close']]
+            return df[['time', 'close', 'tick_volume' , 'spread' , 'low' , 'ema_diference_close' , 'high']]
         elif 'close' in df.columns and 'tick_volume' in df.columns:
             return df[['close', 'tick_volume']]
         elif 'close' in df.columns:
@@ -86,40 +89,6 @@ def dataset_loader_csv(csv_path):
         print(f"Error al leer el archivo CSV: {e}")
         return None
 
-
-def plot_trading_session(data, buy_points, sell_points, symbol, timeframe, save_path='resultados_cv'):
-    fig, ax = plt.subplots(figsize=(14, 7))
-
-    # Línea de precio
-    ax.plot(data.index, data['close'], label='Precio', color='blue')
-    ax.set_xlabel('Fecha')
-    ax.set_ylabel('Precio', color='blue')
-    ax.tick_params(axis='y', labelcolor='blue')
-
-    # Flechas de compra
-    for point in buy_points:
-        ax.scatter(point[0], point[1], color='green', s=100, marker='^', label='Compra')
-
-    # Flechas de venta
-    for point in sell_points:
-        ax.scatter(point[0], point[1], color='red', s=100, marker='v', label='Venta')
-
-    # Título y formato
-    ax.set_title(f'Sesión de Trading - {symbol} ({timeframe})')
-    fig.autofmt_xdate()
-
-    # Leyenda sin duplicados
-    handles, labels = ax.get_legend_handles_labels()
-    unique = dict(zip(labels, handles))
-    ax.legend(unique.values(), unique.keys(), loc='upper left')
-
-    # Mostrar y guardar
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_path, f'trading_session_{symbol}_{timeframe}.png'))
-    plt.show()
-
-
-
 def calculate_sharpe_ratio(returns, risk_free_rate=0.0):
     if len(returns) < 2:
         return 0.0
@@ -132,11 +101,11 @@ def calculate_sharpe_ratio(returns, risk_free_rate=0.0):
 #comienzo del codigo
 def main():
     
-    nombre_csv = "XAUUSD_H1_2015_01_01_2024_05_31.csv"
+    nombre_csv = "XAUUSD_M15_2025_03_01_2025_03_31.csv"
        
     
-    cargar_modelo = True
-    modelo_existente = "resultados_cv/model_XAUUSD_H1_2015_01_01_2024_05_31.csv"
+    cargar_modelo = False
+    modelo_existente = "resultados_cv/model_XAUUSD_M15_2025_05_01__2025_05_02.csv"
     
     cargar_memoria_buffer = True
     
@@ -157,15 +126,16 @@ def main():
     tick_value = 5  
     pip_multiplier = 10000  
     
+    cada_cuantos_episodes_guardar_el_modelo = 3 
   
-    episodes =30
+    episodes =1000
     n_folds = 3
     batch_size = 256
     epsilon_decay = 0.9995
     gamma = 0.95
     cada_cuanto_actualizar = 60
     learning_rate = 0.001
-    window_size = 3
+    window_size = 10
     ventana_para_los_estados_de_datos = 4
 
     balance_first = 100 # dinero inicial
@@ -250,7 +220,6 @@ def main():
         trader.accuracy_history = []
         trader.avg_win_history = []
         trader.avg_loss_history = []
-        trader.epsilon = 1.0
         trader.step_counter = 0
 
         trader.memory.clear()
@@ -283,17 +252,19 @@ def main():
             episode_returns_pips = []
             buy_points = []
             sell_points = []
-            
+            current_loss = 0
             best_low =9999999
+            best_high = 0
             
-            trader.total_rewards = 0
+            #trader.total_rewards = 0
             
+            reward_episode = 0
             if len(trader.inventory) > 0:
                 trader.inventory.clear()
 
             # Bucle que recorre cada estado en los datos que descargue de mt5
             for t in range(data_samples):
-     
+                                
                 # La ia toma una decision
                 action = trader.trade(state)
                 # Siguiente estado de la ia
@@ -304,6 +275,7 @@ def main():
                 # Precio actual
                 current_price = fold_data['close'].iloc[t].item()
                 current_low = fold_data['low'].iloc[t].item()
+                current_high = fold_data['high'].iloc[t].item()
                 spread = fold_data['spread'].iloc[t].item() * lot_size
                 # Indice del precio en el estado actual
                 timestamp = fold_data.index[t]
@@ -317,6 +289,11 @@ def main():
                     best_low = current_low
                 elif len(trader.inventory) <= 0:
                     best_low = 9999999
+                    
+                if len(trader.inventory) > 0 and best_high < current_high:
+                    best_high = current_high
+                elif len(trader.inventory) <= 0:
+                    best_high = 0
            
                 # Si la accion de la ia es igua a 1 compra
                 if action == 1 and not trader.inventory :  # Comprar
@@ -337,21 +314,12 @@ def main():
                 elif action == 2 and len(trader.inventory) > 0:  # Vender
                     # Toma el precio que compro el activo
                     original_buy_price = trader.inventory.pop(0)
-                    # Calcula el profit que obtuvo de la venta de activo (en pips)
-                    if(es_indice):
-                        profit_pips = (sell_price - original_buy_price) 
-                        ticks = profit_pips / 0.25   
-                        profit_dollars = ticks * tick_value * (lot_size / 1.0)
-                    elif(es_forex):
-                        profit_pips = (sell_price - original_buy_price) * pip_multiplier
+
+                    profit_pips = (sell_price - original_buy_price) 
+                    pip_drawdrow_real = (  best_low - original_buy_price)
                         # Calcula la ganancia/pérdida en dólares
-                        profit_dollars = profit_pips * pip_value_eur_usd
-                    elif(es_metal):
-                        profit_pips = (sell_price - original_buy_price) 
-                        pip_drawdrow_real = (  best_low - original_buy_price)
-                        # Calcula la ganancia/pérdida en dólares
-                        profit_drawdrow_real = (pip_drawdrow_real * pip_value_eur_usd) - ( trader.commission_per_trade * lot_size) 
-                        profit_dollars = (profit_pips * pip_value_eur_usd) - ( trader.commission_per_trade * lot_size) 
+                    profit_drawdrow_real = (pip_drawdrow_real * pip_value_eur_usd) - ( trader.commission_per_trade * lot_size) 
+                    profit_dollars = (profit_pips * pip_value_eur_usd) - ( trader.commission_per_trade * lot_size) 
                         
                     # Coloco el profit en la variable (en pips)
                     total_profit_pips += profit_pips
@@ -390,30 +358,92 @@ def main():
                     if episode == episodes and fold == n_folds -1 : sell_points.append((timestamp, sell_price))
                         
             
-                    print(f"tiempo {t} de {data_samples} , episodio: {episode} ,recompensa:{reward:.2f} , por eleccion de ia  Venta a {sell_price:.5f}, Compra a {original_buy_price:.5f}, Profit (pips): {profit_pips:.2f}, Profit (USD): {profit_dollars:.2f}, total de dinero actual {current_equity:.2f}")
-                    print("")
-                    print(f"suma de recompensa {trader.total_rewards}")
-                    print("")
+                    #print(f"tiempo {t} de {data_samples} , episodio: {episode} ,recompensa:{reward:.2f} , por eleccion de ia  Venta a {sell_price:.5f}, Compra a {original_buy_price:.5f}, Profit (pips): {profit_pips:.2f}, Profit (USD): {profit_dollars:.2f}, total de dinero actual {current_equity:.2f}")
+                    #print("")
+                    #print(f"suma de recompensa {trader.total_rewards}")
+                    #print("")
+                    
+                elif action == 3 and len(trader.inventory_sell) <= 0:   
+                    trader.inventory_sell.append(sell_price)
+                    
+                    if alcista.iloc[t] < 0:
+                        reward += 0.01
+                    else:
+                        reward += -0.01
+                                       
+                    if episode == episodes and fold == n_folds -1 : sell_points.append((timestamp, sell_price))
+                
+                elif action == 4 and len(trader.inventory_sell) > 0:
+                    original_sell_price = trader.inventory_sell.pop(0)
+
+                    profit_pips = (original_sell_price - buy_price ) 
+                    pip_drawdrow_real = ( original_sell_price -  best_high  )
+                        # Calcula la ganancia/pérdida en dólares
+                    profit_drawdrow_real = (pip_drawdrow_real * pip_value_eur_usd) - ( trader.commission_per_trade * lot_size) 
+                    profit_dollars = (profit_pips * pip_value_eur_usd) - ( trader.commission_per_trade * lot_size) 
+                        
+                    # Coloco el profit en la variable (en pips)
+                    total_profit_pips += profit_pips
+                    # Usando la variable pip_value que ya definiste
+                    profit_dollars_total += profit_dollars
+                    
+                    # Suma al contador de trades
+                    trades_count += 1
+       
+                    current_drawdown_real +=profit_drawdrow_real
+                    current_equity += profit_dollars  
+                    
+                    if current_equity > peak_equity:
+                        peak_equity = current_equity
+                    elif current_equity < worse_equity:
+                        worse_equity = current_equity
+                    
+                    if current_drawdown_real > peak_equity_drawdrown_real:
+                        peak_equity_drawdrown_real = current_drawdown_real
+
+                    # Agrega el retorno al retorno del episodio cada profit (en pips)
+                    episode_returns_pips.append(profit_pips)
+                    
+                    reward, _ = calculate_advanced_reward(
+                            reward_system, profit_dollars, current_equity, peak_equity,
+                            episode_returns_pips, is_trade_closed=True
+                        )
+                    # Verifica si el profit salio ganador agrefa uno a wins y agrega el profit a winning_profits (en pips)
+                    if profit_pips > 0:
+                        wins += 1
+                        winning_profits_pips.append(profit_pips)
+                    # De lo contrario si sale perdedor se agrega uno a lose y agrega el profit a losing_profits (en pips)
+                    else:
+                        losses += 1
+                        losing_profits_pips.append(profit_pips)
+                    if episode == episodes and fold == n_folds -1 : sell_points.append((timestamp, sell_price))
+                        
+            
+                    #print(f"tiempo {t} de {data_samples} , episodio: {episode} ,recompensa:{reward:.2f} , por eleccion de ia CERRO Venta a {original_sell_price:.5f}, Compra a {buy_price:.5f}, Profit (pips): {profit_pips:.2f}, Profit (USD): {profit_dollars:.2f}, total de dinero actual {current_equity:.2f}")
+                   #print("")
+                    #print(f"suma de recompensa {trader.total_rewards}")
+                    #print("")
                     
                     
-                elif 'time' in data.columns and data['time'].notnull().all() and int(hora.iloc[t].split(":")[0]) == 23 and len(trader.inventory) > 0:
+                elif( len(trader.inventory) > 0 or len(trader.inventory_sell) > 0) and 'time' in data.columns and data['time'].notnull().all() and int(hora.iloc[t].split(":")[0]) == 23   :
                     # Toma el precio que compro el activo
-                    original_buy_price = trader.inventory.pop(0)
-                    # Calcula el profit que obtuvo de la venta de activo (en pips)
-                    if(es_indice):
+                    if  len(trader.inventory) > 0:
+                        original_buy_price = trader.inventory.pop(0)
                         profit_pips = (sell_price - original_buy_price) 
-                        ticks = profit_pips / 0.25   
-                        profit_dollars = ticks * tick_value * (lot_size / 1.0)
-                    elif(es_forex):
-                        profit_pips = (sell_price - original_buy_price) * pip_multiplier
-                        # Calcula la ganancia/pérdida en dólares
-                        profit_dollars = profit_pips * pip_value_eur_usd
-                    elif(es_metal):
-                        profit_pips = (sell_price - original_buy_price) 
-                        # Calcula la ganancia/pérdida en dólares
+                            # Calcula la ganancia/pérdida en dólares
                         pip_drawdrow_real = (  best_low - original_buy_price)
                         profit_drawdrow_real = (pip_drawdrow_real * pip_value_eur_usd) - ( trader.commission_per_trade * lot_size)
                         profit_dollars =( profit_pips * pip_value_eur_usd) - ( trader.commission_per_trade * lot_size) 
+                        
+                        
+                    elif len(trader.inventory_sell) > 0:
+                        original_sell_price = trader.inventory_sell.pop(0)
+                        profit_pips = (original_sell_price - buy_price ) 
+                        pip_drawdrow_real = ( original_sell_price -  best_high )
+                            # Calcula la ganancia/pérdida en dólares
+                        profit_drawdrow_real = (pip_drawdrow_real * pip_value_eur_usd) - ( trader.commission_per_trade * lot_size) 
+                        profit_dollars = (profit_pips * pip_value_eur_usd) - ( trader.commission_per_trade * lot_size) 
+                            
                     
                     
                     # vender forzadamente por cierre de jornada, por ejemplo      
@@ -454,19 +484,10 @@ def main():
                         losing_profits_pips.append(profit_pips)
                     if episode == episodes and fold == n_folds -1 : sell_points.append((timestamp, sell_price))
                 
-                    # Puedes imprimir o guardar la ganancia en dólares si lo deseas
-                   #print("")
                    
-                    print(f"tiempo {t} de {data_samples} , episodio: {episode} ,recompensa:{reward:.2f}, Venta a {sell_price:.5f}, Compra a {original_buy_price:.5f}, Profit (pips): {profit_pips:.2f}, Profit (USD): {profit_dollars:.2f}, total de dinero actual {current_equity:.2f}")
+                    #print(f"tiempo {t} de {data_samples} , episodio: {episode} ,recompensa:{reward:.2f}, Venta a {sell_price:.5f}, Compra a {original_buy_price:.5f}, Profit (pips): {profit_pips:.2f}, Profit (USD): {profit_dollars:.2f}, total de dinero actual {current_equity:.2f}")
     
                 
-                #else:
-                # Para acciones que no cierran trades
-                    #reward, _ = calculate_advanced_reward(
-                        #reward_system, 0, current_equity, peak_equity,
-                        #episode_returns_pips, is_trade_closed=False
-                        #)
-                 
                                     
                 drawdown_real = (peak_equity_drawdrown_real - current_drawdown_real) / peak_equity_drawdrown_real if peak_equity_drawdrown_real != 0 else 0
                 # Calculo de drawdown como ($1070 - $1050) / $1070 ≈ 0.0187 o 1.87%.
@@ -481,12 +502,29 @@ def main():
                 # Ver si termino el episodio
                 done = (t == data_samples - 1)
                 trader.total_rewards += reward
+                reward_episode += reward
                 trader.remember(state, action, reward, next_state, done)
                 state = next_state
                 profit_dollars = 0
+                
+                
+                
                 if len(trader.memory) > batch_size:
                     #entrenamiento !!!!! 
-                    trader.batch_train(batch_size)
+                    current_loss = trader.batch_train(batch_size)
+                    
+                if t % 150 == 0:
+                    print("")
+                    print(f"""
+tiempo {t} de {data_samples} ,
+episodio: {episode} ,
+suma de recompensa {reward_episode},
+total de dinero actual {current_equity:.2f},
+loss = {current_loss}
+                          """)                
+                    print("")
+                    
+                    
 
             sharpe = calculate_sharpe_ratio(np.array(episode_returns_pips))
             accuracy = wins / trades_count if trades_count > 0 else 0
@@ -498,7 +536,7 @@ def main():
                # enviar_alerta(f"Jefe vamos en el episodio {episode} y el total de recompensa es de {trader.total_rewards:.2f}. con un total en dinero de: {price_format(profit_dollars_total)} ")
             reward_system.reset_episode()
               
-   
+            
             print("")
             print("===========================================================================")
             print(f"""Fin Episodio {episode}: 
@@ -512,15 +550,17 @@ def main():
                   Maximo drawdown = {max_drawdown_real:.2%}
                   Drawdown={max_drawdown:.2%}
                   Accuracy={accuracy:.2%}
+                  total de dinero actual {current_equity:.2f}
                   """)
             print("")
-            print(f"total de recompensas: {trader.total_rewards:.2f} ")
+            print(f"total de recompensas del episodio: {reward_episode:.2f} ")
             print("===========================================================================")
             print("")
             trader.profit_history.append(profit_dollars_total)
             trader.epsilon_history.append(trader.epsilon)
             trader.trades_history.append(trades_count)
             trader.rewards_history.append(trader.total_rewards)
+            trader.rewards_history_episode.append(reward_episode)
             #trader.loss_history.append(np.mean(trader.loss_history[-10:]) if trader.loss_history else 0)
             trader.drawdown_history.append(max_drawdown)
             trader.sharpe_ratios.append(sharpe)
@@ -528,7 +568,7 @@ def main():
             trader.avg_win_history.append(avg_win)
             trader.avg_loss_history.append(avg_loss)
             
-            if episode % 1 == 0  :
+            if episode % cada_cuantos_episodes_guardar_el_modelo == 0  :
                 trader.plot_training_metrics(save_path=resultados_dir )
                 trader.save_model(os.path.join(resultados_dir, nombre_modelo_guardado))
                 

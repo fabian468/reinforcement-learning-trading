@@ -9,13 +9,13 @@ import numpy as np
 
 
 class SumTree(object):
-    data_ptr = 0
-
+    
     def __init__(self, capacity):
         self.capacity = capacity
         self.tree = np.zeros(2 * capacity - 1)
         self.data = np.zeros(capacity, dtype=object)
         self.n_entries = 0 # Nuevo atributo para rastrear el número de entradas
+        self.data_ptr = 0
 
     def add(self, priority, data):
         tree_index = self.capacity - 1 + self.data_ptr
