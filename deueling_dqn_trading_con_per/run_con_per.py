@@ -18,6 +18,13 @@ import pstats
 
 load_dotenv() 
 
+import torch
+
+if torch.cuda.is_available():
+    print("GPU disponible:", torch.cuda.get_device_name(0))
+else:
+    print("GPU no disponible, ejecutando en CPU")
+
 from dueling_dqn_con_per import AI_Trader_per 
 from state_creator import  state_creator_vectorized 
 from AdvancedRewardSystem import AdvancedRewardSystem , calculate_advanced_reward
@@ -103,7 +110,7 @@ def main():
        
     
     cargar_modelo = False
-    modelo_existente = "resultados_cv/model_XAUUSD_M15_2025_03_01_2025_03_31.csv"
+    modelo_existente = "resultados_cv/model_XAUUSD_H1_2015_01_01_2024_05_31.csv"
     
     cargar_memoria_buffer = True
     

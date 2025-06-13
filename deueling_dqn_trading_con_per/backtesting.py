@@ -1,11 +1,16 @@
 import random
 import numpy as np
-import tensorflow as tf
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import os
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from indicadores import  rsi , macd , add_ema200_distance
+
+from model_pytorch import DuelingDQN
 
 class Backtesting_model:
     def __init__(
@@ -21,7 +26,7 @@ class Backtesting_model:
         self.random_market_event_probability = random_market_event_probability
         self.spread = spread
         self.commission_per_trade = commission_per_trade
-
+        
 
         self.profit_history = []
         self.rewards_history = []
@@ -33,23 +38,25 @@ class Backtesting_model:
         self.avg_win_history = []
         self.avg_loss_history = []
 
-        self.model = None  # Será cargado posteriormente
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            
+            # Asegúrate de definir el modelo antes
+        self.model =  DuelingDQN(60, 5).to(self.device)
 
     def trade(self, state):
-        if random.random() <= self.epsilon:
-            return random.randrange(self.action_space)
-        
-        actions = self.model.predict(state, verbose=0)
-        return np.argmax(actions[0])
-
-    def load_model(self, name, cargar_memoria_buffer=False):
+        with torch.no_grad():
+           state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+           q_values = self.model(state_tensor)
+           return torch.argmax(q_values, dim=1).item()
+       
+    def load_model(self, name):
         try:
-            self.model = tf.keras.models.load_model(f"{name}.h5")
-            self.model.compile(
-                loss='mse',
-                optimizer=tf.keras.optimizers.Adam(learning_rate=self.learning_rate)
-            )
-            print(f"Modelo '{name}.h5' cargado correctamente.")
+            # Cargar checkpoint
+            checkpoint = torch.load(f"{name}.pth", map_location=self.device)
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+    
+            print(f"Modelo cargado desde {name}.pth")
+    
         except Exception as e:
             print(f"Error al cargar modelo: {e}")
             print("Manteniendo valores por defecto.")

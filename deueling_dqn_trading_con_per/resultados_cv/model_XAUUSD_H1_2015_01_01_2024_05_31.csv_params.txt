@@ -1,5 +1,5 @@
-epsilon:0.1999071022334634
-step_counter:7444
+epsilon:0.09996751969443773
+step_counter:69008
 use_double_dqn:True
 reward_noise_std:0.01
 random_market_event_probability:0.01
@@ -14,4 +14,4 @@ lr_decay_rate:0.97
 lr_decay_steps:100
 lr_min:1e-06
 initial_learning_rate:0.001
-current_learning_rate:0.0010000000474974513
+current_learning_rate:3.8997197653565158e-31
