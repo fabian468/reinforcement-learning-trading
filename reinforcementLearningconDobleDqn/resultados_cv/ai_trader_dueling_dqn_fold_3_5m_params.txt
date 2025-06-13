@@ -1,0 +1,12 @@
+epsilon:0.009998671593271896
+step_counter:4776
+use_double_dqn:True
+reward_noise_std:0.001
+random_market_event_probability:0.01
+spread:0.0001
+commission_per_trade:5e-05
+sharpe_lookback:20
+max_open_positions:3
+stop_loss_percent:0.01
+take_profit_percent:0.02
+risk_per_trade_percent:0.01

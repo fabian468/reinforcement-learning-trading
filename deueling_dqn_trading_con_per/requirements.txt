@@ -1,0 +1,10 @@
+numpy
+pandas
+tensorflow
+matplotlib
+python-dotenv
+scikit-learn
+dropbox
+requests
+cProfile
+pstats

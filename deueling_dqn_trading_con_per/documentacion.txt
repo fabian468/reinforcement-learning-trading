@@ -1,0 +1,21 @@
+
+Dueling dqn para agente de trading
+
+
+pasos 
+
+paso 1: 
+
+1.-coloco los hiperparametros
+2.-Inicio el sistema de recompensa 
+3.-cargo los datos 
+4.-Separo los datos
+5.-coloco el dato de time en la tabla datos
+6.-coloco el tamaño de los estados de la windows
+7.-Instancio la clase trader 
+8.-Cargo el modelo si es que hay un modelo 
+9.-coloco el tamaño de los fold
+10.-coloco el array de los datos 
+11.-Comienzo el fold
+12.-creo el start y el end para los datos del fold
+13.-
