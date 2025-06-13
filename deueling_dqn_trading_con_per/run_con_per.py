@@ -131,7 +131,7 @@ def main():
     tick_value = 5  
     pip_multiplier = 10000  
     
-    cada_cuantos_episodes_guardar_el_modelo = 5
+    cada_cuantos_episodes_guardar_el_modelo = 6
   
     episodes =2000
     n_folds = 3
