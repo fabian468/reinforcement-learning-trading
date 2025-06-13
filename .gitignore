@@ -1,6 +1,1 @@
-*.txt
-*.h5
-*.csv
-*.png
-
-*.env
+.env
