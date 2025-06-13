@@ -131,16 +131,16 @@ def main():
     tick_value = 5  
     pip_multiplier = 10000  
     
-    cada_cuantos_episodes_guardar_el_modelo = 3 
+    cada_cuantos_episodes_guardar_el_modelo = 5
   
-    episodes =1000
+    episodes =2000
     n_folds = 3
     batch_size = 256
     epsilon_decay = 0.9995
     gamma = 0.95
     cada_cuanto_actualizar = 60
     learning_rate = 0.001
-    window_size = 10
+    window_size = 15
     ventana_para_los_estados_de_datos = 4
 
     balance_first = 100 # dinero inicial
@@ -518,7 +518,7 @@ def main():
                     #entrenamiento !!!!! 
                     current_loss = trader.batch_train(batch_size)
                     
-                if t % 150 == 0:
+                if t % 1500 == 0:
                     print("")
                     print(f"""
 tiempo {t} de {data_samples} ,
