@@ -13,7 +13,7 @@ mandar el current equity actual y el peak equity actual calculado con el profit 
 """
 import numpy as np
 from collections import deque
-import math
+
 
 class AdvancedRewardSystem:
     def __init__(self, initial_balance=100, risk_free_rate=0.02):

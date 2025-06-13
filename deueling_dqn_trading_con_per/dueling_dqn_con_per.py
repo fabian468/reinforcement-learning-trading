@@ -6,18 +6,90 @@ Created on Mon May 12 10:44:38 2025
 
 import random
 import numpy as np
-import tensorflow as tf
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import os
 import pickle
 
 from SumTree_class import SumTree
 
-@tf.keras.utils.register_keras_serializable()
-def combine_value_and_advantage(inputs):
-    value, advantage = inputs
-    advantage_mean = tf.keras.backend.mean(advantage, axis=1, keepdims=True)
-    return value + (advantage - advantage_mean)
+
+class DuelingDQN(nn.Module):
+    def __init__(self, state_size, action_space):
+        super(DuelingDQN, self).__init__()
+        
+        # Normalización de entrada
+        self.layer_norm = nn.LayerNorm(state_size)
+        
+        # Capas principales con LayerNorm en lugar de BatchNorm
+        self.fc1 = nn.Linear(state_size, 512)
+        self.ln1 = nn.LayerNorm(512)
+        self.dropout1 = nn.Dropout(0.1)
+        
+        self.fc2 = nn.Linear(512, 256)
+        self.ln2 = nn.LayerNorm(256)
+        self.dropout2 = nn.Dropout(0.1)
+        
+        self.fc3 = nn.Linear(256, 128)
+        self.ln3 = nn.LayerNorm(128)
+        self.dropout3 = nn.Dropout(0.1)
+        
+        self.fc4 = nn.Linear(128, 64)
+        self.ln4 = nn.LayerNorm(64)
+        self.dropout4 = nn.Dropout(0.2)
+        
+        # Value stream
+        self.value_stream = nn.Linear(64, 128)
+        self.value_ln = nn.LayerNorm(128)
+        self.value_dropout = nn.Dropout(0.2)
+        self.value = nn.Linear(128, 1)
+        
+        # Advantage stream
+        self.advantage_stream = nn.Linear(64, 128)
+        self.advantage_ln = nn.LayerNorm(128)
+        self.advantage_dropout = nn.Dropout(0.2)
+        self.advantage = nn.Linear(128, action_space)
+        
+        # Inicialización de pesos
+        self._init_weights()
+        
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+    
+    def forward(self, x):
+        x = self.layer_norm(x)
+        
+        x = F.leaky_relu(self.ln1(self.fc1(x)), negative_slope=0.1)
+        x = self.dropout1(x)
+        
+        x = F.leaky_relu(self.ln2(self.fc2(x)), negative_slope=0.1)
+        x = self.dropout2(x)
+        
+        x = F.leaky_relu(self.ln3(self.fc3(x)), negative_slope=0.1)
+        x = self.dropout3(x)
+        
+        x = F.leaky_relu(self.ln4(self.fc4(x)), negative_slope=0.1)
+        x = self.dropout4(x)
+        
+        value_stream = F.leaky_relu(self.value_ln(self.value_stream(x)), negative_slope=0.1)
+        value_stream = self.value_dropout(value_stream)
+        value = self.value(value_stream)
+        
+        advantage_stream = F.leaky_relu(self.advantage_ln(self.advantage_stream(x)), negative_slope=0.1)
+        advantage_stream = self.advantage_dropout(advantage_stream)
+        advantage = self.advantage(advantage_stream)
+        
+        advantage_mean = advantage.mean(dim=1, keepdim=True)
+        q_values = value + (advantage - advantage_mean)
+        
+        return q_values
 
 
 class AI_Trader_per():
@@ -49,6 +121,11 @@ class AI_Trader_per():
                  factor=0.5,               # Factor de reducción para reduce_on_plateau
                  cosine_restarts=False,    # Para cosine decay con restarts
                  ):
+        
+        # Configurar dispositivo
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Using device: {self.device}")
+        
         self.state_size = state_size
         self.action_space = action_space
         self.memory = SumTree(memory_size) # Usamos SumTree ahora
@@ -89,11 +166,14 @@ class AI_Trader_per():
         # Historial del learning rate
         self.lr_history = []
 
-        self.model = self.model_builder()
+        # Crear modelos
+        self.model = DuelingDQN(state_size, action_space).to(self.device)
+        self.optimizer = self._create_optimizer()
+        self.scheduler = self._create_scheduler()
 
         if self.use_double_dqn:
-            self.target_model = self.model_builder()
-            self.target_model.set_weights(self.model.get_weights())
+            self.target_model = DuelingDQN(state_size, action_space).to(self.device)
+            self.target_model.load_state_dict(self.model.state_dict())
 
         self.profit_history = []
         self.rewards_history = []
@@ -113,6 +193,33 @@ class AI_Trader_per():
         self.beta = beta_start
         self.beta_frames = beta_frames
         self.epsilon_priority = epsilon_priority
+        
+    def _create_optimizer(self):
+        return optim.Adam(self.model.parameters(), lr=self.learning_rate, weight_decay=0.001)
+    
+    def _create_scheduler(self):
+        if self.scheduler_type == 'exponential_decay':
+            return optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=self.lr_decay_rate)
+        elif self.scheduler_type == 'cosine_decay':
+            if self.cosine_restarts:
+                return optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                    self.optimizer, T_0=self.lr_decay_steps, eta_min=self.lr_min
+                )
+            else:
+                return optim.lr_scheduler.CosineAnnealingLR(
+                    self.optimizer, T_max=self.lr_decay_steps, eta_min=self.lr_min
+                )
+        elif self.scheduler_type == 'polynomial_decay':
+            return optim.lr_scheduler.PolynomialLR(
+                self.optimizer, total_iters=self.lr_decay_steps, power=0.9
+            )
+        elif self.scheduler_type == 'reduce_on_plateau':
+            return optim.lr_scheduler.ReduceLROnPlateau(
+                self.optimizer, mode='min', factor=self.factor, 
+                patience=self.patience, min_lr=self.lr_min
+            )
+        else:  # 'constant'
+            return None
         
     def get_scheduled_lr(self, step):
         """Calcula el learning rate basado en el scheduler configurado"""
@@ -161,153 +268,61 @@ class AI_Trader_per():
                 new_lr = max(self.learning_rate * self.factor, self.lr_min)
                 if new_lr < self.learning_rate:
                     self.learning_rate = new_lr
-                    # Actualizar el learning rate del optimizador de forma segura
-                    self._update_optimizer_lr(new_lr)
+                    # Actualizar el learning rate del optimizador
+                    for param_group in self.optimizer.param_groups:
+                        param_group['lr'] = new_lr
                     print(f"Learning rate reducido a {self.learning_rate:.6f} en el paso {self.step_counter}")
                 self.patience_counter = 0
-    
-    def _update_optimizer_lr(self, new_lr):
-        """Actualiza el learning rate del optimizador de forma segura"""
-        try:
-            # Método más robusto para actualizar el learning rate
-            self.model.optimizer.learning_rate.assign(new_lr)
-            if self.use_double_dqn and hasattr(self, 'target_model'):
-                self.target_model.optimizer.learning_rate.assign(new_lr)
-        except (AttributeError, TypeError):
-            try:
-                # Método alternativo
-                tf.keras.backend.set_value(self.model.optimizer.learning_rate, float(new_lr))
-                if self.use_double_dqn and hasattr(self, 'target_model'):
-                    tf.keras.backend.set_value(self.target_model.optimizer.learning_rate, float(new_lr))
-            except (AttributeError, TypeError):
-                # Último recurso: recompilar el modelo
-                self.model.compile(loss='mse', optimizer=tf.keras.optimizers.Adam(learning_rate=float(new_lr)))
-                if self.use_double_dqn and hasattr(self, 'target_model'):
-                    self.target_model.compile(loss='mse', optimizer=tf.keras.optimizers.Adam(learning_rate=float(new_lr)))
                 
     def update_learning_rate(self):
         """Actualiza el learning rate según el scheduler configurado"""
-        if self.scheduler_type != 'reduce_on_plateau':
-            new_lr = self.get_scheduled_lr(self.step_counter)
-            if abs(new_lr - self.learning_rate) > 1e-8:  # Solo actualizar si hay cambio significativo
-                self.learning_rate = new_lr
-                # Actualizar el learning rate del optimizador de forma segura
-                self._update_optimizer_lr(new_lr)
+        if self.scheduler_type == 'reduce_on_plateau':
+            # Se maneja en update_learning_rate_on_plateau
+            pass
+        elif self.scheduler is not None and self.scheduler_type != 'constant':
+            if self.scheduler_type in ['exponential_decay', 'cosine_decay', 'polynomial_decay']:
+                if self.step_counter % self.lr_decay_steps == 0 and self.step_counter > 0:
+                    self.scheduler.step()
+            
+            # Actualizar learning_rate desde el optimizador
+            self.learning_rate = self.optimizer.param_groups[0]['lr']
         
         # Guardar en historial
         self.lr_history.append(self.learning_rate)
-        
-    def _create_lr_schedule(self):
-        """Crea un schedule de TensorFlow nativo (alternativa más robusta)"""
-        if self.scheduler_type == 'exponential_decay':
-            return tf.keras.optimizers.schedules.ExponentialDecay(
-                initial_learning_rate=self.initial_learning_rate,
-                decay_steps=self.lr_decay_steps,
-                decay_rate=self.lr_decay_rate,
-                staircase=False
-            )
-        elif self.scheduler_type == 'cosine_decay':
-            if self.cosine_restarts:
-                return tf.keras.optimizers.schedules.CosineDecayRestarts(
-                    initial_learning_rate=self.initial_learning_rate,
-                    first_decay_steps=self.lr_decay_steps,
-                    t_mul=2.0,
-                    m_mul=1.0,
-                    alpha=self.lr_min/self.initial_learning_rate
-                )
-            else:
-                return tf.keras.optimizers.schedules.CosineDecay(
-                    initial_learning_rate=self.initial_learning_rate,
-                    decay_steps=self.lr_decay_steps,
-                    alpha=self.lr_min/self.initial_learning_rate
-                )
-        elif self.scheduler_type == 'polynomial_decay':
-            return tf.keras.optimizers.schedules.PolynomialDecay(
-                initial_learning_rate=self.initial_learning_rate,
-                decay_steps=self.lr_decay_steps,
-                end_learning_rate=self.lr_min,
-                power=0.9
-            )
-        else:
-            # Para 'reduce_on_plateau' o 'constant', usamos LR fijo
-            return self.learning_rate
-
-    def model_builder(self):
-        input_layer = tf.keras.layers.Input(shape=(self.state_size,))
-        
-        # Normalización de entrada - añadimos esta capa para normalizar los inputs
-        x = tf.keras.layers.LayerNormalization()(input_layer)
-        
-        # Capa densa con Batch Normalization y regularización L2
-        x = tf.keras.layers.Dense(512, kernel_regularizer=tf.keras.regularizers.l2(0.001))(x)
-        x = tf.keras.layers.BatchNormalization()(x)  # Batch Normalization
-        x = tf.keras.layers.LeakyReLU(negative_slope=0.1)(x)  # Activación LeakyReLU con pendiente 0.1 para valores negativos
-        x = tf.keras.layers.Dropout(0.1)(x)  # Agregamos Dropout con tasa del 20%
-    
-        # Capa adicional con regularización L2
-        x = tf.keras.layers.Dense(256, kernel_regularizer=tf.keras.regularizers.l2(0.001))(x)
-        x = tf.keras.layers.BatchNormalization()(x)  # Batch Normalization
-        x = tf.keras.layers.LeakyReLU(negative_slope=0.1)(x)  # Activación LeakyReLU con pendiente 0.1 para valores negativos
-        x = tf.keras.layers.Dropout(0.1)(x)  # Agregamos Dropout con tasa del 20%
-        
-        x = tf.keras.layers.Dense(128, kernel_regularizer=tf.keras.regularizers.l2(0.001))(x)
-        x = tf.keras.layers.BatchNormalization()(x)  # Batch Normalization
-        x = tf.keras.layers.LeakyReLU(negative_slope=0.1)(x)  # Activación LeakyReLU con pendiente 0.1 para valores negativos
-        x = tf.keras.layers.Dropout(0.1)(x)  # Agregamos Dropout con tasa del 20%
-    
-        x = tf.keras.layers.Dense(64, kernel_regularizer=tf.keras.regularizers.l2(0.001))(x)
-        x = tf.keras.layers.BatchNormalization()(x)  # Batch Normalization
-        x = tf.keras.layers.LeakyReLU(negative_slope=0.1)(x)  # Activación LeakyReLU con pendiente 0.1 para valores negativos
-        x = tf.keras.layers.Dropout(0.2)(x)  # Agregamos Dropout con tasa del 20%
-        
-        # Valor (value stream) con regularización L2
-        value_stream = tf.keras.layers.Dense(128, kernel_regularizer=tf.keras.regularizers.l2(0.001))(x)
-        value_stream = tf.keras.layers.BatchNormalization()(value_stream)  # Batch Normalization
-        value_stream = tf.keras.layers.LeakyReLU(negative_slope=0.1)(value_stream)  # Activación LeakyReLU con pendiente 0.1
-        value_stream = tf.keras.layers.Dropout(0.2)(value_stream)  # Agregamos Dropout con tasa del 20%
-        value = tf.keras.layers.Dense(1)(value_stream)
-        
-        # Ventaja (advantage stream) con regularización L2
-        advantage_stream = tf.keras.layers.Dense(128, kernel_regularizer=tf.keras.regularizers.l2(0.001))(x)
-        advantage_stream = tf.keras.layers.BatchNormalization()(advantage_stream)  # Batch Normalization
-        advantage_stream = tf.keras.layers.LeakyReLU(negative_slope=0.1)(advantage_stream)  # Activación LeakyReLU con pendiente 0.1
-        advantage_stream = tf.keras.layers.Dropout(0.2)(advantage_stream)  # Agregamos Dropout con tasa del 20%
-        advantage = tf.keras.layers.Dense(self.action_space)(advantage_stream)
-        
-        # Combinamos valor y ventaja
-        outputs = tf.keras.layers.Lambda(combine_value_and_advantage)([value, advantage])
-    
-        # Definimos el modelo
-        model = tf.keras.models.Model(inputs=input_layer, outputs=outputs)
-    
-        # Crear el schedule de learning rate
-        lr_schedule = self._create_lr_schedule()
-        
-        # Compilamos el modelo con el schedule
-        model.compile(loss='mse', optimizer=tf.keras.optimizers.Adam(learning_rate=lr_schedule))
-        
-        return model
 
     def _get_priority(self, error):
         return (np.abs(error) + self.epsilon_priority) ** self.alpha
 
     def remember(self, state, action, reward, next_state, done):
-        # state ya debería tener la forma (1, state_size)
-        q_value = self.model.predict(state, verbose=0)[0][action]
+        # Convertir a tensor si es necesario
+        if isinstance(state, np.ndarray):
+            state_tensor = torch.FloatTensor(state).to(self.device)
+        else:
+            state_tensor = state
+            
+        if state_tensor.dim() == 1:
+            state_tensor = state_tensor.unsqueeze(0)
+            
+        with torch.no_grad():
+            q_value = self.model(state_tensor)[0][action].cpu().numpy()
+            
         if done:
             target_q = reward
         else:
-            if state.ndim == 1:
-                state = np.expand_dims(state, axis=0)
-            # Asegúrate de que next_state tenga la forma correcta (1, state_size)
-            if next_state.ndim == 1:
-                next_state = np.expand_dims(next_state, axis=0)
-    
-            if self.use_double_dqn:
-                next_action = np.argmax(self.model.predict(next_state, verbose=0)[0])
-                target_q = reward + self.gamma * self.target_model.predict(next_state, verbose=0)[0][next_action]
+            if isinstance(next_state, np.ndarray):
+                next_state_tensor = torch.FloatTensor(next_state).to(self.device)
             else:
-                target_q = reward + self.gamma * np.max(self.model.predict(next_state, verbose=0)[0])
+                next_state_tensor = next_state
+                
+            if next_state_tensor.dim() == 1:
+                next_state_tensor = next_state_tensor.unsqueeze(0)
+    
+            with torch.no_grad():
+                if self.use_double_dqn:
+                    next_action = torch.argmax(self.model(next_state_tensor)[0]).cpu().numpy()
+                    target_q = reward + self.gamma * self.target_model(next_state_tensor)[0][next_action].cpu().numpy()
+                else:
+                    target_q = reward + self.gamma * torch.max(self.model(next_state_tensor)[0]).cpu().numpy()
                 
         error = np.abs(target_q - q_value)
         priority = self._get_priority(error)
@@ -334,58 +349,47 @@ class AI_Trader_per():
             priorities[i] = p
     
         # Desempaquetar el batch de manera vectorizada
-        # zip(*) transforma una lista de tuplas en tuplas de listas
-        # Ejemplo: [(s1,a1,r1), (s2,a2,r2)] -> ([s1,s2], [a1,a2], [r1,r2])
         states_list, actions_list, rewards_list, next_states_list, dones_list = zip(*batch_data)
     
-        states = np.array(states_list)
-        actions = np.array(actions_list, dtype=np.int32)
-        rewards = np.array(rewards_list, dtype=np.float32)
-        next_states = np.array(next_states_list)
-        dones = np.array(dones_list, dtype=np.bool_)
+        # Convertir a tensores de PyTorch
+        states = torch.FloatTensor(np.array(states_list)).to(self.device)
+        actions = torch.LongTensor(np.array(actions_list)).to(self.device)
+        rewards = torch.FloatTensor(np.array(rewards_list)).to(self.device)
+        next_states = torch.FloatTensor(np.array(next_states_list)).to(self.device)
+        dones = torch.BoolTensor(np.array(dones_list)).to(self.device)
     
-        # Reducir dimensiones si es necesario (ej. para imágenes que vienen como (batch, 1, H, W))
-        if states.ndim > 2:
-            states = np.squeeze(states, axis=1)
-        if next_states.ndim > 2:
-            next_states = np.squeeze(next_states, axis=1)
+        # Reducir dimensiones si es necesario
+        if states.dim() > 2:
+            states = states.squeeze(1)
+        if next_states.dim() > 2:
+            next_states = next_states.squeeze(1)
     
         # Predicciones de los modelos
-        # verbose=0 para no imprimir el progreso de predicción
-        target_q = self.model.predict(states, verbose=0)
-        next_q = self.model.predict(next_states, verbose=0)
-        target_next_q = self.target_model.predict(next_states, verbose=0)
+        current_q_values = self.model(states)
+        next_q_values = self.model(next_states)
+        target_next_q_values = self.target_model(next_states) if self.use_double_dqn else next_q_values
     
-        # --- Cálculo de los valores objetivo (TD target) de forma vectorizada ---
-        # Obtener los Q-valores de las mejores acciones del siguiente estado
-        if self.use_double_dqn:
-            # El modelo principal elige la acción óptima en el siguiente estado
-            best_actions = np.argmax(next_q, axis=1)
-            # El target model evalúa el Q-valor de esa acción
-            target_next_q_values = target_next_q[np.arange(batch_size), best_actions]
-        else:
-            # DQN estándar: el target model elige y evalúa la mejor acción
-            target_next_q_values = np.max(next_q, axis=1)
+        # Cálculo de los valores objetivo (TD target)
+        with torch.no_grad():
+            if self.use_double_dqn:
+                # El modelo principal elige la acción óptima en el siguiente estado
+                best_actions = torch.argmax(next_q_values, dim=1)
+                # El target model evalúa el Q-valor de esa acción
+                target_next_q_values_selected = target_next_q_values.gather(1, best_actions.unsqueeze(1)).squeeze()
+            else:
+                # DQN estándar: el target model elige y evalúa la mejor acción
+                target_next_q_values_selected = torch.max(target_next_q_values, dim=1)[0]
     
-        # Guardar los Q-valores originales para las acciones tomadas para el cálculo del error TD
-        old_q_values_for_actions = target_q[np.arange(batch_size), actions]
+            # Calcular los Q-valores objetivo
+            q_targets = rewards + self.gamma * target_next_q_values_selected * (~dones)
     
-        # Calcular los Q-valores objetivo para todas las transiciones
-        # Inicialmente, el objetivo para la acción tomada es la recompensa si el episodio terminó
-        # O recompensa + gamma * max_q_next si no terminó
-        q_targets_for_actions = rewards + self.gamma * target_next_q_values
-        
-        # Si 'done' es True, el objetivo es simplemente la recompensa (no hay futuro)
-        q_targets_for_actions = np.where(dones, rewards, q_targets_for_actions)
+        # Q-valores actuales para las acciones tomadas
+        current_q_values_for_actions = current_q_values.gather(1, actions.unsqueeze(1)).squeeze()
     
-        # Actualizar la matriz target_q con los nuevos valores objetivo solo para las acciones tomadas
-        # Esto asegura que solo las Q-valores correspondientes a las acciones realizadas se actualicen
-        target_q[np.arange(batch_size), actions] = q_targets_for_actions
+        # Calcular el error TD
+        errors = torch.abs(q_targets - current_q_values_for_actions).detach().cpu().numpy()
     
-        # Calcular el error TD de forma vectorizada
-        errors = np.abs(q_targets_for_actions - old_q_values_for_actions)
-    
-        # Actualizar las prioridades en la memoria (esto aún requiere un bucle debido a la estructura del SumTree)
+        # Actualizar las prioridades en la memoria
         for i in range(batch_size):
             self.memory.update(tree_idx[i], self._get_priority(errors[i]))
     
@@ -393,40 +397,29 @@ class AI_Trader_per():
         sampling_probabilities = priorities / self.memory.total_priority
         weights = np.power(self.memory_size * sampling_probabilities, -self.beta)
         weights /= weights.max() # Normalizar pesos
+        weights = torch.FloatTensor(weights).to(self.device)
     
-        # Actualizar learning rate si el scheduler es 'reduce_on_plateau' o 'constant'
-        if self.scheduler_type in ['reduce_on_plateau', 'constant']:
-            self.update_learning_rate()
+        # Calcular la pérdida con pesos de importancia
+        loss = F.mse_loss(current_q_values_for_actions, q_targets, reduction='none')
+        weighted_loss = (loss * weights).mean()
     
-        # Entrenar el modelo con los pesos de importancia
-        history = self.model.fit(states, target_q, sample_weight=weights, epochs=1, verbose=0)
-        current_loss = history.history['loss'][0]
+        # Actualizar el modelo
+        self.optimizer.zero_grad()
+        weighted_loss.backward()
+        # Gradient clipping para estabilidad
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+        self.optimizer.step()
+        
+        current_loss = weighted_loss.item()
         self.loss_history.append(current_loss)
         
-        # Obtener el learning rate actual del optimizador (más robusto)
-        try:
-            current_lr_obj = self.model.optimizer.learning_rate
-            if hasattr(current_lr_obj, 'numpy'):
-                current_lr = float(current_lr_obj.numpy())
-            elif hasattr(current_lr_obj, '__call__'): # Para tf.keras.optimizers.schedules
-                current_lr = float(current_lr_obj(self.model.optimizer.iterations).numpy())
-            else: # Para otros casos, asumir que es un float directamente
-                current_lr = float(current_lr_obj)
-            self.learning_rate = current_lr
-        except Exception: # Captura cualquier excepción para el fallback
-            # Fallback: usar el LR calculado manualmente
-            if self.scheduler_type not in ['reduce_on_plateau', 'constant']:
-                self.learning_rate = self.get_scheduled_lr(self.step_counter)
-                
-        # Actualizar learning rate basado en el loss si se usa reduce_on_plateau
+        # Actualizar learning rate
+        self.update_learning_rate()
         self.update_learning_rate_on_plateau(current_loss)
             
-        # Guardar en historial
-        self.lr_history.append(self.learning_rate)
-    
         # Actualizar el modelo objetivo (target model) si se usa Double DQN
         if self.use_double_dqn and self.step_counter % self.target_model_update == 0:
-            self.target_model.set_weights(self.model.get_weights())
+            self.target_model.load_state_dict(self.model.state_dict())
             
         # Incrementar el contador de pasos
         self.step_counter += 1
@@ -441,13 +434,29 @@ class AI_Trader_per():
         if random.random() <= self.epsilon:
             return random.randrange(self.action_space)
     
-        actions = self.model.predict(state, verbose=0)
-        return np.argmax(actions[0])
+        if isinstance(state, np.ndarray):
+            state = torch.FloatTensor(state).to(self.device)
+        if state.dim() == 1:
+            state = state.unsqueeze(0)
+            
+        with torch.no_grad():
+            actions = self.model(state)
+            return torch.argmax(actions[0]).cpu().numpy()
 
     def save_model(self, name):
-        self.model.save(f"{name}.h5")
+        # Guardar modelo principal
+        torch.save({
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+        }, f"{name}.pth")
+        
+        # Guardar modelo target si existe
         if self.use_double_dqn:
-            self.target_model.save(f"{name}_target.h5")
+            torch.save({
+                'model_state_dict': self.target_model.state_dict(),
+            }, f"{name}_target.pth")
+            
+        # Guardar parámetros
         with open(f"{name}_params.txt", "w") as f:
             f.write(f"epsilon:{self.epsilon}\n")
             f.write(f"step_counter:{self.step_counter}\n")
@@ -467,25 +476,32 @@ class AI_Trader_per():
             f.write(f"initial_learning_rate:{self.initial_learning_rate}\n")
             f.write(f"current_learning_rate:{self.learning_rate}\n")
             
+        # Guardar memoria
         with open(f"{name}_memory.pkl", "wb") as f:
             pickle.dump(self.memory, f)
 
-        print(f"Modelo guardado como {name}.h5, parámetros en {name}_params.txt y memoria en {name}_memory.pkl")
+        print(f"Modelo guardado como {name}.pth, parámetros en {name}_params.txt y memoria en {name}_memory.pkl")
     
 
-    def load_model(self, name , cargar_memoria_buffer):
+    def load_model(self, name, cargar_memoria_buffer):
         try:
             if cargar_memoria_buffer:
                 with open(f"{name}_memory.pkl", "rb") as f:
                     self.memory = pickle.load(f)
                     print("Memoria cargada")
                     
-            self.model = tf.keras.models.load_model(f"{name}.h5", custom_objects={'combine_value_and_advantage': combine_value_and_advantage}, compile=False)
-            self.model.compile(loss='mse', optimizer=tf.keras.optimizers.Adam(learning_rate=self.learning_rate))
-            if self.use_double_dqn and tf.io.gfile.exists(f"{name}_target.h5"):
-                self.target_model = tf.keras.models.load_model(f"{name}_target.h5", custom_objects={'combine_value_and_advantage': combine_value_and_advantage}, compile=False)
-                self.target_model.compile(loss='mse', optimizer=tf.keras.optimizers.Adam(learning_rate=self.learning_rate))
-            if tf.io.gfile.exists(f"{name}_params.txt"):
+            # Cargar modelo principal
+            checkpoint = torch.load(f"{name}.pth", map_location=self.device)
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            
+            # Cargar modelo target si existe
+            if self.use_double_dqn and os.path.exists(f"{name}_target.pth"):
+                target_checkpoint = torch.load(f"{name}_target.pth", map_location=self.device)
+                self.target_model.load_state_dict(target_checkpoint['model_state_dict'])
+                
+            # Cargar parámetros
+            if os.path.exists(f"{name}_params.txt"):
                 with open(f"{name}_params.txt", "r") as f:
                     for line in f:
                         if ":" in line:
@@ -524,7 +540,11 @@ class AI_Trader_per():
                                 self.initial_learning_rate = float(value)
                             elif key == "current_learning_rate":
                                 self.learning_rate = float(value)
-                print(f"Modelo cargado desde {name}.h5 con epsilon = {self.epsilon} y parámetros.")
+                                
+                # Recrear scheduler después de cargar parámetros
+                self.scheduler = self._create_scheduler()
+                                
+                print(f"Modelo cargado desde {name}.pth con epsilon = {self.epsilon} y parámetros.")
             else:
                 print("Archivo de parámetros no encontrado, manteniendo valores por defecto.")
         except Exception as e:

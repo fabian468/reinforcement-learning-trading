@@ -30,8 +30,6 @@ DROPBOX_ACCESS_TOKEN = os.getenv("ACCESS_TOKEN_DROPBOX")
 
 dbx = dropbox.Dropbox(DROPBOX_ACCESS_TOKEN)
 
-import tensorflow as tf
-print(tf.config.list_physical_devices('GPU'))
 
 def sigmoid(x):
     return 1 / (1 + math.exp(-x))
@@ -101,11 +99,11 @@ def calculate_sharpe_ratio(returns, risk_free_rate=0.0):
 #comienzo del codigo
 def main():
     
-    nombre_csv = "XAUUSD_M15_2025_03_01_2025_03_31.csv"
+    nombre_csv = "XAUUSD_H1_2015_01_01_2024_05_31.csv"
        
     
     cargar_modelo = False
-    modelo_existente = "resultados_cv/model_XAUUSD_M15_2025_05_01__2025_05_02.csv"
+    modelo_existente = "resultados_cv/model_XAUUSD_M15_2025_03_01_2025_03_31.csv"
     
     cargar_memoria_buffer = True
     
