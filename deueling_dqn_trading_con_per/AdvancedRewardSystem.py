@@ -21,20 +21,28 @@ class AdvancedRewardSystem:
         self.risk_free_rate = risk_free_rate / 252  # Tasa diaria
         
         # Buffers para métricas móviles
-        self.returns_buffer = deque(maxlen=100)
+        self.returns_buffer = deque(maxlen=50)
         self.equity_buffer = deque(maxlen=50)
         self.drawdown_buffer = deque(maxlen=30)
         self.previous_equity = initial_balance  # Para calcular drawdown incremental
-     
+        
+        self.sumaRecompensaProfit = 0
+        self.sumaRecompensaSharpe = 0
+        self.sumaRecompensaDrawndown = 0
+        self.sumaRecompensaConsistency =0
+        self.sumaRecompensaRiskAdjusted = 0
+        self.sumaRecompensaMomentum = 0
+        self.sumaRecompensaTradeQuality = 0
+        
         # Pesos para componentes de recompensa
         self.weights = {
             'profit': 1.5,           # Base profit
             'sharpe': 0.5,          # Sharpe ratio component
-            'drawdown': 1.2,       # Penalización por drawdown
-            'consistency': 0.3,     # Consistencia de retornos
+            'drawdown': 0.3,       # Penalización por drawdown
+            'consistency': 0.2,     # Consistencia de retornos
             'risk_adjusted': 0.4,   # Retorno ajustado por riesgo
             'momentum': 0.2,        # Momentum de equity
-            'trade_quality': 0.3    # Calidad del trade pero al ser un valor de 0.3 disminuye el retorno de negativo o positivo
+            'trade_quality': 0.2    # Calidad del trade pero al ser un valor de 0.3 disminuye el retorno de negativo o positivo
         }
 
     def calculate_reward(self, profit_dollars, current_equity, peak_equity, 
@@ -89,7 +97,22 @@ class AdvancedRewardSystem:
             weighted_value = weight * value
             #print(f"{component}: valor={value:.4f}, peso={weight:.4f}, ponderado={weighted_value:.4f}")
             total_reward += weighted_value
-        
+            
+            if component == 'profit':
+                self.sumaRecompensaProfit += weighted_value
+            elif component == 'sharpe':
+                self.sumaRecompensaSharpe += weighted_value
+            elif component == 'drawdown':
+                self.sumaRecompensaDrawndown += weighted_value
+            elif component == 'consistency':
+                self.sumaRecompensaConsistency += weighted_value
+            elif component == 'risk_adjusted':
+                self.sumaRecompensaRiskAdjusted += weighted_value
+            elif component == 'momentum':
+                self.sumaRecompensaMomentum += weighted_value
+            elif component == 'trade_quality':
+                self.sumaRecompensaTradeQuality += weighted_value
+
         # Actualizar buffers
         self._update_buffers(profit_dollars, current_equity, current_equity/peak_equity if peak_equity > 0 else 1)
         
@@ -152,7 +175,11 @@ class AdvancedRewardSystem:
         
         # Recompensa inversa al coeficiente de variación
         consistency_score = 1 / (1 + cv)
-        return consistency_score - 0.5  # Centrar en 0
+        
+        if mean_return < 0:
+            consistency_score *= -1 
+        
+        return consistency_score # Centrar en 0
     
     def _calculate_risk_adjusted_reward(self, profit_dollars):
         """Recompensa ajustada por el riesgo tomado"""
@@ -196,7 +223,7 @@ class AdvancedRewardSystem:
         # Recompensa trades que superan el promedio reciente
         if avg_recent_return != 0:
             relative_performance = profit_dollars / (abs(avg_recent_return) * self.initial_balance)
-            return np.tanh(relative_performance - 1)  # -1 para que sea relativo
+            return np.tanh(relative_performance)  # -1 para que sea relativo
         
         return 0
     
@@ -212,11 +239,11 @@ class AdvancedRewardSystem:
         # Al final, priorizar profit y sharpe
         adaptive_weights = self.weights.copy()
         
-        if episode % 30 == 0:
-            adaptive_weights['drawdown'] += -0.5  # Más conservador
-            adaptive_weights['consistency'] += 0.8
-            adaptive_weights['profit'] += 0.8
-        elif episode % 55 == 0:  # Últimos 30% episodios
+        if episode % 80 == 0:
+            adaptive_weights['drawdown'] += 0.5  # Más conservador
+            adaptive_weights['consistency'] += 0.2
+            adaptive_weights['profit'] += 0.5
+        elif episode % 150 == 0:  # Últimos 30% episodios
             adaptive_weights['profit'] += 1.5
             adaptive_weights['sharpe'] += 1.3
             adaptive_weights['drawdown'] += -1.1

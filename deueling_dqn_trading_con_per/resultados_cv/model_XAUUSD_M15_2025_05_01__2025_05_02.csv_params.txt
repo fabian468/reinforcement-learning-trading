@@ -1,0 +1,17 @@
+epsilon:0.09991257268528593
+step_counter:45936
+use_double_dqn:True
+reward_noise_std:0.01
+random_market_event_probability:0.01
+spread:0.2
+commission_per_trade:4.5
+alpha:0.6
+beta_start:0.4
+beta_frames:100000
+epsilon_priority:1e-06
+scheduler_type:exponential_decay
+lr_decay_rate:0.97
+lr_decay_steps:100
+lr_min:1e-06
+initial_learning_rate:0.001
+current_learning_rate:6.965292250524668e-21

@@ -19,8 +19,8 @@ from indicadores import  rsi , macd , add_ema200_distance
 #timestep = 1 window_size = 15
 #lo que pasa es que me rellena con 0 cuando no tiene suficientes datos para calcular el rsi y el macd 
 def state_creator_vectorized(data, timestep, window_size):
-    tiempo_rsi = 12
-    tiempo_macd = 12
+    tiempo_rsi = 20
+    tiempo_macd = 20
     tiempo_ema = 200
     
     # Para el state, usamos solo la ventana especificada

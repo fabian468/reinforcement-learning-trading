@@ -14,9 +14,7 @@ import os
 import pickle
 
 from SumTree_class import SumTree
-
 from model_pytorch import DuelingDQN
-
 
 
 class AI_Trader_per():
@@ -34,19 +32,19 @@ class AI_Trader_per():
                  use_double_dqn=True,
                  target_model_update=100,
                  learning_rate=0.001,
-                 memory_size=10000, # Tamaño de la memoria
+                 memory_size=500000, # Tamaño de la memoria
                  alpha=0.6,        # Hiperparámetro para la priorización
                  beta_start=0.4,   # Hiperparámetro para la corrección de importancia
                  beta_frames=100000, # Número de frames para alcanzar beta=1
                  epsilon_priority=1e-6, # Pequeña constante para evitar probabilidad cero
                  # Nuevos parámetros para el scheduler
-                 scheduler_type='exponential_decay',  # 'exponential_decay', 'cosine_decay', 'polynomial_decay', 'reduce_on_plateau'
+                 scheduler_type='cosine_decay',  # 'exponential_decay', 'cosine_decay', 'polynomial_decay', 'reduce_on_plateau'
                  lr_decay_rate=0.97,        # Factor de decaimiento para exponential
                  lr_decay_steps=1000,       # Pasos entre decaimientos
-                 lr_min=1e-6,              # Learning rate mínimo
+                 lr_min=0.000001,              # Learning rate mínimo
                  patience=10,              # Para reduce_on_plateau
                  factor=0.5,               # Factor de reducción para reduce_on_plateau
-                 cosine_restarts=False,    # Para cosine decay con restarts
+                 cosine_restarts=True,    # Para cosine decay con restarts
                  ):
         
         # Configurar dispositivo
@@ -86,10 +84,6 @@ class AI_Trader_per():
         self.patience = patience
         self.factor = factor
         self.cosine_restarts = cosine_restarts
-        
-        # Variables para reduce_on_plateau
-        self.best_loss = float('inf')
-        self.patience_counter = 0
         
         # Historial del learning rate
         self.lr_history = []
@@ -148,75 +142,6 @@ class AI_Trader_per():
             )
         else:  # 'constant'
             return None
-        
-    def get_scheduled_lr(self, step):
-        """Calcula el learning rate basado en el scheduler configurado"""
-        if self.scheduler_type == 'exponential_decay':
-            # Decaimiento exponencial: lr = initial_lr * decay_rate^(step/decay_steps)
-            decay_factor = self.lr_decay_rate ** (step / self.lr_decay_steps)
-            new_lr = self.initial_learning_rate * decay_factor
-            return max(new_lr, self.lr_min)
-            
-        elif self.scheduler_type == 'polynomial_decay':
-            # Decaimiento polinomial
-            if step < self.lr_decay_steps:
-                decay_factor = (1 - step / self.lr_decay_steps) ** 0.9
-                new_lr = (self.initial_learning_rate - self.lr_min) * decay_factor + self.lr_min
-            else:
-                new_lr = self.lr_min
-            return new_lr
-            
-        elif self.scheduler_type == 'cosine_decay':
-            # Decaimiento coseno
-            if self.cosine_restarts:
-                # Cosine decay with restarts
-                restart_period = self.lr_decay_steps
-                t = step % restart_period
-                cosine_factor = 0.5 * (1 + np.cos(np.pi * t / restart_period))
-            else:
-                # Cosine decay sin restarts
-                cosine_factor = 0.5 * (1 + np.cos(np.pi * min(step, self.lr_decay_steps) / self.lr_decay_steps))
-            
-            new_lr = self.lr_min + (self.initial_learning_rate - self.lr_min) * cosine_factor
-            return new_lr
-            
-        else:  # 'constant' o cualquier otro valor
-            return self.learning_rate
-    
-    def update_learning_rate_on_plateau(self, current_loss):
-        """Actualiza el learning rate basado en el loss (reduce on plateau)"""
-        if self.scheduler_type == 'reduce_on_plateau':
-            if current_loss < self.best_loss:
-                self.best_loss = current_loss
-                self.patience_counter = 0
-            else:
-                self.patience_counter += 1
-                
-            if self.patience_counter >= self.patience:
-                new_lr = max(self.learning_rate * self.factor, self.lr_min)
-                if new_lr < self.learning_rate:
-                    self.learning_rate = new_lr
-                    # Actualizar el learning rate del optimizador
-                    for param_group in self.optimizer.param_groups:
-                        param_group['lr'] = new_lr
-                    print(f"Learning rate reducido a {self.learning_rate:.6f} en el paso {self.step_counter}")
-                self.patience_counter = 0
-                
-    def update_learning_rate(self):
-        """Actualiza el learning rate según el scheduler configurado"""
-        if self.scheduler_type == 'reduce_on_plateau':
-            # Se maneja en update_learning_rate_on_plateau
-            pass
-        elif self.scheduler is not None and self.scheduler_type != 'constant':
-            if self.scheduler_type in ['exponential_decay', 'cosine_decay', 'polynomial_decay']:
-                if self.step_counter % self.lr_decay_steps == 0 and self.step_counter > 0:
-                    self.scheduler.step()
-            
-            # Actualizar learning_rate desde el optimizador
-            self.learning_rate = self.optimizer.param_groups[0]['lr']
-        
-        # Guardar en historial
-        self.lr_history.append(self.learning_rate)
 
     def _get_priority(self, error):
         return (np.abs(error) + self.epsilon_priority) ** self.alpha
@@ -341,9 +266,12 @@ class AI_Trader_per():
         current_loss = weighted_loss.item()
         self.loss_history.append(current_loss)
         
-        # Actualizar learning rate
-        self.update_learning_rate()
-        self.update_learning_rate_on_plateau(current_loss)
+        # Actualizar learning rate usando schedulers nativos de PyTorch
+        self._update_learning_rate(current_loss)
+        
+        # Actualizar learning_rate actual desde el optimizador
+        self.learning_rate = self.optimizer.param_groups[0]['lr']
+        self.lr_history.append(self.learning_rate)
             
         # Actualizar el modelo objetivo (target model) si se usa Double DQN
         if self.use_double_dqn and self.step_counter % self.target_model_update == 0:
@@ -357,6 +285,24 @@ class AI_Trader_per():
             self.epsilon *= self.epsilon_decay
             
         return current_loss
+    
+    def _update_learning_rate(self, current_loss):
+        """Actualiza el learning rate usando los schedulers nativos de PyTorch"""
+        if self.scheduler is None:
+            return
+            
+        if self.scheduler_type == 'reduce_on_plateau':
+            # ReduceLROnPlateau requiere el loss como métrica
+            self.scheduler.step(current_loss)
+        else:
+            # Los demás schedulers se actualizan sin parámetros
+            if self.scheduler_type == 'exponential_decay':
+                # Actualizar cada lr_decay_steps pasos
+                if self.step_counter % self.lr_decay_steps == 0 and self.step_counter > 0:
+                    self.scheduler.step()
+            else:
+                # Para cosine y polynomial, actualizar en cada paso
+                self.scheduler.step()
             
     def trade(self, state):
         if random.random() <= self.epsilon:
@@ -373,10 +319,16 @@ class AI_Trader_per():
 
     def save_model(self, name):
         # Guardar modelo principal
-        torch.save({
+        model_save_dict = {
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
-        }, f"{name}.pth")
+        }
+        
+        # Guardar scheduler si existe
+        if self.scheduler is not None:
+            model_save_dict['scheduler_state_dict'] = self.scheduler.state_dict()
+            
+        torch.save(model_save_dict, f"{name}.pth")
         
         # Guardar modelo target si existe
         if self.use_double_dqn:
@@ -403,6 +355,9 @@ class AI_Trader_per():
             f.write(f"lr_min:{self.lr_min}\n")
             f.write(f"initial_learning_rate:{self.initial_learning_rate}\n")
             f.write(f"current_learning_rate:{self.learning_rate}\n")
+            f.write(f"patience:{self.patience}\n")
+            f.write(f"factor:{self.factor}\n")
+            f.write(f"cosine_restarts:{self.cosine_restarts}\n")
             
         # Guardar memoria
         with open(f"{name}_memory.pkl", "wb") as f:
@@ -410,7 +365,6 @@ class AI_Trader_per():
 
         print(f"Modelo guardado como {name}.pth, parámetros en {name}_params.txt y memoria en {name}_memory.pkl")
     
-
     def load_model(self, name, cargar_memoria_buffer):
         try:
             if cargar_memoria_buffer:
@@ -422,6 +376,10 @@ class AI_Trader_per():
             checkpoint = torch.load(f"{name}.pth", map_location=self.device)
             self.model.load_state_dict(checkpoint['model_state_dict'])
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            
+            # Cargar scheduler si existe
+            if 'scheduler_state_dict' in checkpoint and self.scheduler is not None:
+                self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
             
             # Cargar modelo target si existe
             if self.use_double_dqn and os.path.exists(f"{name}_target.pth"):
@@ -468,6 +426,12 @@ class AI_Trader_per():
                                 self.initial_learning_rate = float(value)
                             elif key == "current_learning_rate":
                                 self.learning_rate = float(value)
+                            elif key == "patience":
+                                self.patience = int(value)
+                            elif key == "factor":
+                                self.factor = float(value)
+                            elif key == "cosine_restarts":
+                                self.cosine_restarts = value.lower() == "true"
                                 
                 # Recrear scheduler después de cargar parámetros
                 self.scheduler = self._create_scheduler()
@@ -573,8 +537,10 @@ class AI_Trader_per():
         elif self.scheduler_type == 'reduce_on_plateau':
             print(f"Paciencia: {self.patience}")
             print(f"Factor de reducción: {self.factor}")
-            print(f"Mejor loss: {self.best_loss}")
         elif self.scheduler_type == 'cosine_decay':
             print(f"Pasos totales: {self.lr_decay_steps}")
             print(f"Con restarts: {self.cosine_restarts}")
+        elif self.scheduler_type == 'polynomial_decay':
+            print(f"Pasos totales: {self.lr_decay_steps}")
+            print(f"Potencia: 0.9")
         print("=" * 50)

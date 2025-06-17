@@ -106,8 +106,7 @@ def calculate_sharpe_ratio(returns, risk_free_rate=0.0):
 #comienzo del codigo
 def main():
     
-    nombre_csv = "XAUUSD_H1_2015_01_01_2024_05_31.csv"
-       
+    nombre_csv = "XAUUSD_M15_2025_03_01_2025_03_31.csv"
     
     cargar_modelo = False
     modelo_existente = "resultados_cv/model_XAUUSD_H1_2015_01_01_2024_05_31.csv"
@@ -116,14 +115,12 @@ def main():
     
     guardar_estadisticas_en_backend = True   
     guardar_en_dropbox = False
-    
+    mostrar_prints = False
     
     symbol = "GOLD"
     intervalo = "daily"
-
-
-    nombre_modelo_guardado = "model_" + nombre_csv
     
+    nombre_modelo_guardado = "model_" + nombre_csv
     
     es_indice = False
     es_forex = False
@@ -131,20 +128,20 @@ def main():
     tick_value = 5  
     pip_multiplier = 10000  
     
-    cada_cuantos_episodes_guardar_el_modelo = 6
+    cada_cuantos_episodes_guardar_el_modelo = 50
   
     episodes =2000
     n_folds = 3
-    batch_size = 256
-    epsilon_decay = 0.9995
-    gamma = 0.95
-    cada_cuanto_actualizar = 60
+    batch_size = 64
+    epsilon_decay = 0.99995
+    gamma = 0.98
+    cada_cuanto_actualizar = 200
     learning_rate = 0.001
     window_size = 15
     ventana_para_los_estados_de_datos = 4
 
     balance_first = 100 # dinero inicial
-    lot_size = 0.01   
+    lot_size = 0.01    
     commission_per_trade = 4.5
     test_size_ratio = 0.2  # 20% para prueba
     
@@ -178,15 +175,15 @@ def main():
                        commission_per_trade= commission_per_trade,
                        gamma = gamma,
                        target_model_update = cada_cuanto_actualizar,
-                       memory_size=10000, # Asegúrate de tener esto
+                       memory_size=500000, # Asegúrate de tener esto
                        alpha=0.6,
                        beta_start=0.4,
                        beta_frames=100000,
                        epsilon_priority=1e-6,
-                       scheduler_type='exponential_decay',
+                       scheduler_type='cosine_decay',
                        learning_rate=learning_rate,
                        lr_decay_rate=0.97,      # LR se multiplica por 0.96 cada lr_decay_steps
-                       lr_decay_steps=100,     # Cada 1000 pasos de entrenamiento
+                       lr_decay_steps=1000,     # Cada 1000 pasos de entrenamiento
                        lr_min=1e-6
                        )
 
@@ -260,6 +257,14 @@ def main():
             current_loss = 0
             best_low =9999999
             best_high = 0
+            
+            reward_system.sumaRecompensaProfit = 0
+            reward_system.sumaRecompensaSharpe = 0
+            reward_system.sumaRecompensaDrawndown = 0
+            reward_system.sumaRecompensaConsistency =0
+            reward_system.sumaRecompensaRiskAdjusted = 0
+            reward_system.sumaRecompensaMomentum = 0
+            reward_system.sumaRecompensaTradeQuality = 0
             
             #trader.total_rewards = 0
             
@@ -517,17 +522,19 @@ def main():
                 if len(trader.memory) > batch_size:
                     #entrenamiento !!!!! 
                     current_loss = trader.batch_train(batch_size)
-                    
-                if t % 1500 == 0:
-                    print("")
-                    print(f"""
+                
+                
+                if mostrar_prints:
+                    if t % 1500 == 0:
+                        print("")
+                        print(f"""
 tiempo {t} de {data_samples} ,
 episodio: {episode} ,
 suma de recompensa {reward_episode},
 total de dinero actual {current_equity:.2f},
 loss = {current_loss}
                           """)                
-                    print("")
+                        print("")
                     
                     
 
@@ -556,6 +563,13 @@ loss = {current_loss}
                   Drawdown={max_drawdown:.2%}
                   Accuracy={accuracy:.2%}
                   total de dinero actual {current_equity:.2f}
+                  Recompensa profit = {reward_system.sumaRecompensaProfit}
+                  Recompensa Sharpe = {reward_system.sumaRecompensaSharpe}
+                  Recompensa Drawndown = {reward_system.sumaRecompensaDrawndown}
+                  Recompensa Consistencia  = {reward_system.sumaRecompensaConsistency} 
+                  Recompensa Risk ajustado = {reward_system.sumaRecompensaRiskAdjusted}
+                  Recompensa momentum = {reward_system.sumaRecompensaMomentum }
+                  Recompensa calidad de trade = {reward_system.sumaRecompensaTradeQuality}
                   """)
             print("")
             print(f"total de recompensas del episodio: {reward_episode:.2f} ")
