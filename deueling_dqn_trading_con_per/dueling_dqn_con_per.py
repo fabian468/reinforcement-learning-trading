@@ -456,10 +456,12 @@ class AI_Trader_per():
         fig, axs = plt.subplots(5, 2, figsize=(15, 20))  # 5 filas, 2 columnas
         fig.suptitle('Métricas de Entrenamiento', fontsize=16)
 
-        axs[0, 0].plot(episodes, self.profit_history[:min_length], label='Beneficio Total')
+        axs[0, 0].plot(episodes, self.profit_history[:min_length], label='Beneficio Total', color='blue')
+        axs[0, 0].axhline(y=0, color='gray', linestyle='--', linewidth=1)  # Línea horizontal en y=0
         axs[0, 0].set_ylabel('Beneficio')
         axs[0, 0].grid(True)
         axs[0, 0].legend()
+
 
         axs[0, 1].plot(episodes, self.epsilon_history[:min_length], label='Epsilon', color='red')
         axs[0, 1].set_ylabel('Epsilon')
@@ -516,6 +518,7 @@ class AI_Trader_per():
 
         axs[4, 1].plot(episodes, self.rewards_history_episode[:min_length], label='Recompensa por episodios', color='green')
         axs[4, 1].set_ylabel('Recompensa')
+        axs[4, 1].axhline(y=0, color='gray', linestyle='--', linewidth=1)
         axs[4, 1].grid(True)
         axs[4, 1].legend()
 

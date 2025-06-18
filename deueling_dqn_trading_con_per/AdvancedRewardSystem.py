@@ -36,7 +36,7 @@ class AdvancedRewardSystem:
         
         # Pesos para componentes de recompensa
         self.weights = {
-            'profit': 1.5,           # Base profit
+            'profit': 1.1,           # Base profit
             'sharpe': 0.5,          # Sharpe ratio component
             'drawdown': 0.3,       # Penalización por drawdown
             'consistency': 0.2,     # Consistencia de retornos
@@ -135,24 +135,20 @@ class AdvancedRewardSystem:
         return normalized_sharpe
     
     def _calculate_drawdown_penalty(self, current_equity, peak_equity):
-        """Penalización basada en el drawdown incremental de la acción"""
-        
-        if self.previous_equity <= 0:
-            self.previous_equity = current_equity
+        if peak_equity <= 0:
             return 0.0
-        
-        # Calculamos el RETORNO incremental (no drawdown)
-        incremental_return = (current_equity - self.previous_equity) / self.previous_equity
-
-        if incremental_return < 0:  # Hay pérdida (retorno negativo)
-            # Penalizamos las pérdidas usando el valor absoluto
-            penalty = incremental_return * 1.2
-        else:  # Hay ganancia o se mantiene igual
-            penalty = 0.1
-            
-        # Actualizamos el equity anterior
-        self.previous_equity = current_equity
-        
+    
+        drawdown_percentage = (peak_equity - current_equity) / peak_equity
+    
+        # Penalización si hay un drawdown significativo.
+        # Puedes ajustar los multiplicadores y umbrales.
+        if drawdown_percentage > 0.05: # Si el drawdown es superior al 5%
+            penalty = - drawdown_percentage * 1.5 # Penaliza más fuerte
+        elif drawdown_percentage > 0:
+            penalty = - drawdown_percentage * 0.5 # Penaliza menos para pequeños drawdowns
+        else:
+            penalty = 0.0 # No hay drawdown o es ganancia
+    
         return penalty
     
     def _calculate_consistency_reward(self):

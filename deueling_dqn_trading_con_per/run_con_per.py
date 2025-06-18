@@ -128,16 +128,16 @@ def main():
     tick_value = 5  
     pip_multiplier = 10000  
     
-    cada_cuantos_episodes_guardar_el_modelo = 50
+    cada_cuantos_episodes_guardar_el_modelo = 5
   
     episodes =2000
     n_folds = 3
-    batch_size = 64
+    batch_size = 256
     epsilon_decay = 0.99995
     gamma = 0.98
     cada_cuanto_actualizar = 200
     learning_rate = 0.001
-    window_size = 15
+    window_size = 18
     ventana_para_los_estados_de_datos = 4
 
     balance_first = 100 # dinero inicial
@@ -175,16 +175,16 @@ def main():
                        commission_per_trade= commission_per_trade,
                        gamma = gamma,
                        target_model_update = cada_cuanto_actualizar,
-                       memory_size=500000, # Asegúrate de tener esto
+                       memory_size=200000, # Asegúrate de tener esto
                        alpha=0.6,
                        beta_start=0.4,
                        beta_frames=100000,
-                       epsilon_priority=1e-6,
+                       epsilon_priority=1e-3,
                        scheduler_type='cosine_decay',
                        learning_rate=learning_rate,
                        lr_decay_rate=0.97,      # LR se multiplica por 0.96 cada lr_decay_steps
                        lr_decay_steps=1000,     # Cada 1000 pasos de entrenamiento
-                       lr_min=1e-6
+                       lr_min=1e-5
                        )
 
     if cargar_modelo:
@@ -232,7 +232,7 @@ def main():
         for episode in range(1, episodes + 1):
             print(f"Episodio: {episode}/{episodes}")
             
-            reward_system.weights = reward_system.get_adaptive_weights(episode)
+            #reward_system.weights = reward_system.get_adaptive_weights(episode)
             # Crea las estadísticas del episodio
             state = states[0]
             total_profit_pips = 0
