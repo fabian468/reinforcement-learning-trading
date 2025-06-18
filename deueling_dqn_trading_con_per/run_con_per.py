@@ -106,7 +106,7 @@ def calculate_sharpe_ratio(returns, risk_free_rate=0.0):
 #comienzo del codigo
 def main():
     
-    nombre_csv = "XAUUSD_M15_2025_03_01_2025_03_31.csv"
+    nombre_csv = "XAUUSD_H1_2015_01_01_2024_05_31.csv"
     
     cargar_modelo = False
     modelo_existente = "resultados_cv/model_XAUUSD_H1_2015_01_01_2024_05_31.csv"
