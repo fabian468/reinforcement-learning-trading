@@ -13,6 +13,10 @@ import dropbox
 from notificador import enviar_alerta
 
 
+from numba import jit
+import warnings
+warnings.filterwarnings('ignore')
+
 import cProfile
 import pstats
 
@@ -96,6 +100,20 @@ def calculate_sharpe_ratio(returns, risk_free_rate=0.0):
     excess_returns = returns - risk_free_rate
     return np.mean(excess_returns) / np.std(excess_returns) if np.std(excess_returns) != 0 else 0.0
 
+
+@jit(nopython=True)
+def calculate_profit_fast(buy_price, sell_price, pip_value, commission, lot_size):
+    """Cálculo rápido de profit usando Numba"""
+    profit_pips = sell_price - buy_price
+    profit_dollars = (profit_pips * pip_value) - (commission * lot_size)
+    return profit_pips, profit_dollars
+
+@jit(nopython=True) 
+def calculate_short_profit_fast(sell_price, buy_price, pip_value, commission, lot_size):
+    """Cálculo rápido de profit para ventas en corto"""
+    profit_pips = sell_price - buy_price
+    profit_dollars = (profit_pips * pip_value) - (commission * lot_size)
+    return profit_pips, profit_dollars
 
 #como puedo mejorar la convergencia el 
 
@@ -205,9 +223,37 @@ def main():
         fold_data = train_data.iloc[absolute_start:end].copy()
 
         data_samples = len(fold_data) - 1 
+        
+        print(f"Pre-calculando datos del fold {fold + 1 }...")
+        close_prices = fold_data['close'].values
+        low_prices = fold_data['low'].values  
+        high_prices = fold_data['high'].values
+        spreads = fold_data['spread'].values
+        timestamps = fold_data.index.values
+        
+        # Pre-calcular precios de compra y venta
+        spread_half = spreads * lot_size * 0.5
+        buy_prices_pre = close_prices + spread_half
+        sell_prices_pre = close_prices - spread_half
+        
+        # Pre-calcular alcista si existe
+        if 'alcista' in locals():
+            alcista_values = alcista.values
+        else:
+            alcista_values = np.zeros(len(fold_data))
+        
+        # Pre-calcular horas si existe
+        if 'hora' in locals() and 'time' in data.columns:
+            hora_values = hora.values
+            has_time = True
+        else:
+            has_time = False
 
-        states =[state_creator_vectorized(fold_data, t , window_size) for t in range(data_samples)] # Usa la función vectorizada
 
+        print("Generando estados...")
+        states = [state_creator_vectorized(fold_data, t, window_size) for t in range(data_samples)]
+        print(f"Estados generados: {len(states)}")
+        
         # Crea las estadísticas para guardar
         trader.profit_history = []
         trader.epsilon_history = []
@@ -232,7 +278,6 @@ def main():
             # Crea las estadísticas del episodio
             state = states[0]
             total_profit_pips = 0
-            trader.inventory = []
             trades_count = 0
             wins = 0
             losses = 0
@@ -267,6 +312,10 @@ def main():
             reward_episode = 0
             if len(trader.inventory) > 0:
                 trader.inventory.clear()
+            
+            if len(trader.inventory_sell) > 0:
+                trader.inventory_sell.clear()
+                
 
             # Bucle que recorre cada estado en los datos que descargue de mt5
             for t in range(data_samples):
@@ -279,18 +328,16 @@ def main():
                 # Comenzando la recompensa
                 reward = 0
                 # Precio actual
-                current_price = fold_data['close'].iloc[t].item()
-                current_low = fold_data['low'].iloc[t].item()
-                current_high = fold_data['high'].iloc[t].item()
-                spread = fold_data['spread'].iloc[t].item() * lot_size
-                # Indice del precio en el estado actual
-                timestamp = fold_data.index[t]
+                current_price = close_prices[t]
+                current_low = low_prices[t]
+                current_high = high_prices[t]
+                spread = spreads[t] * lot_size
+                timestamp = timestamps[t]
 
                 # Coloca el precio de compra actual con
-                buy_price = current_price +  spread / 2 if action == 1 else current_price
-                sell_price = current_price - spread / 2 if action == 2 and len(trader.inventory) > 0 else current_price
-                
-                
+                buy_price = buy_prices_pre[t] if action == 1 else current_price
+                sell_price = sell_prices_pre[t] if action == 2 and len(trader.inventory) > 0 else current_price
+                    
                 if len(trader.inventory) > 0 and best_low > current_low:
                     best_low = current_low
                 elif len(trader.inventory) <= 0:
@@ -302,41 +349,34 @@ def main():
                     best_high = 0
            
                 # Si la accion de la ia es igua a 1 compra
-                if action == 1 and not trader.inventory :  # Comprar
-                    # Agrega el precio de compra al inventario
+                if action == 1 and not trader.inventory:  # Comprar
                     trader.inventory.append(buy_price)
-                    
-                    if alcista.iloc[t] > 0:
-                        reward += 0.01
-                    else:
-                        reward += -0.01
-                                       
-                    if episode == episodes and fold == n_folds -1 : buy_points.append((timestamp, buy_price))
-                
-                elif action == 0 and len(trader.inventory) <= 0 and alcista.iloc[t] > 0:
-                    reward += -0.01
-                    
+                    reward += 0.01 if t < len(alcista_values) and alcista_values[t] > 0 else -0.01
+                    if episode == episodes and fold == n_folds - 1:
+                        buy_points.append((timestamp, buy_price))
+                        
+                elif action == 0 and len(trader.inventory) <= 0 and t < len(alcista_values) and alcista_values[t] > 0:
+                                reward += -0.01
+                        
                 # Si la accion de la ia es igual a 2 y hay un trade abierto vende esa accion
                 elif action == 2 and len(trader.inventory) > 0:  # Vender
-                    # Toma el precio que compro el activo
                     original_buy_price = trader.inventory.pop(0)
-
-                    profit_pips = (sell_price - original_buy_price) 
-                    pip_drawdrow_real = (  best_low - original_buy_price)
-                        # Calcula la ganancia/pérdida en dólares
-                    profit_drawdrow_real = (pip_drawdrow_real * pip_value_eur_usd) - ( trader.commission_per_trade * lot_size) 
-                    profit_dollars = (profit_pips * pip_value_eur_usd) - ( trader.commission_per_trade * lot_size) 
-                        
-                    # Coloco el profit en la variable (en pips)
-                    total_profit_pips += profit_pips
-                    # Usando la variable pip_value que ya definiste
-                    profit_dollars_total += profit_dollars
                     
-                    # Suma al contador de trades
+                    # USAR FUNCIÓN OPTIMIZADA PARA CÁLCULOS
+                    profit_pips, profit_dollars = calculate_profit_fast(
+                        original_buy_price, sell_price, pip_value_eur_usd, trader.commission_per_trade, lot_size
+                    )
+                    
+                    pip_drawdrow_real, profit_drawdrow_real = calculate_profit_fast(
+                        original_buy_price, best_low, pip_value_eur_usd, trader.commission_per_trade, lot_size
+                    )
+                    
+                    # Actualizar variables
+                    total_profit_pips += profit_pips
+                    profit_dollars_total += profit_dollars
                     trades_count += 1
-       
-                    current_drawdown_real +=profit_drawdrow_real
-                    current_equity += profit_dollars  
+                    current_drawdown_real += profit_drawdrow_real
+                    current_equity += profit_dollars
                     
                     if current_equity > peak_equity:
                         peak_equity = current_equity
@@ -345,59 +385,52 @@ def main():
                     
                     if current_drawdown_real > peak_equity_drawdrown_real:
                         peak_equity_drawdrown_real = current_drawdown_real
-
-                    # Agrega el retorno al retorno del episodio cada profit (en pips)
+    
                     episode_returns_pips.append(profit_pips)
                     
                     reward, _ = calculate_advanced_reward(
-                            reward_system, profit_dollars, current_equity, peak_equity,
-                            episode_returns_pips, is_trade_closed=True
-                        )
-                    # Verifica si el profit salio ganador agrefa uno a wins y agrega el profit a winning_profits (en pips)
+                        reward_system, profit_dollars, current_equity, peak_equity,
+                        episode_returns_pips, is_trade_closed=True
+                    )
+                    
                     if profit_pips > 0:
                         wins += 1
                         winning_profits_pips.append(profit_pips)
-                    # De lo contrario si sale perdedor se agrega uno a lose y agrega el profit a losing_profits (en pips)
                     else:
                         losses += 1
                         losing_profits_pips.append(profit_pips)
-                    if episode == episodes and fold == n_folds -1 : sell_points.append((timestamp, sell_price))
                         
-            
-                    #print(f"tiempo {t} de {data_samples} , episodio: {episode} ,recompensa:{reward:.2f} , por eleccion de ia  Venta a {sell_price:.5f}, Compra a {original_buy_price:.5f}, Profit (pips): {profit_pips:.2f}, Profit (USD): {profit_dollars:.2f}, total de dinero actual {current_equity:.2f}")
-                    #print("")
-                    #print(f"suma de recompensa {trader.total_rewards}")
-                    #print("")
+                    if episode == episodes and fold == n_folds - 1:
+                        sell_points.append((timestamp, sell_price))
                     
-                elif action == 3 and len(trader.inventory_sell) <= 0:   
+                    # Reset best values
+                    best_low = 9999999.0
+                    best_high = 0.0
+                    
+                elif action == 3 and len(trader.inventory_sell) <= 0:  # Venta en corto
                     trader.inventory_sell.append(sell_price)
-                    
-                    if alcista.iloc[t] < 0:
-                        reward += 0.01
-                    else:
-                        reward += -0.01
-                                       
-                    if episode == episodes and fold == n_folds -1 : sell_points.append((timestamp, sell_price))
-                
-                elif action == 4 and len(trader.inventory_sell) > 0:
-                    original_sell_price = trader.inventory_sell.pop(0)
-
-                    profit_pips = (original_sell_price - buy_price ) 
-                    pip_drawdrow_real = ( original_sell_price -  best_high  )
-                        # Calcula la ganancia/pérdida en dólares
-                    profit_drawdrow_real = (pip_drawdrow_real * pip_value_eur_usd) - ( trader.commission_per_trade * lot_size) 
-                    profit_dollars = (profit_pips * pip_value_eur_usd) - ( trader.commission_per_trade * lot_size) 
+                    reward += 0.01 if t < len(alcista_values) and alcista_values[t] < 0 else -0.01
+                    if episode == episodes and fold == n_folds - 1:
+                        sell_points.append((timestamp, sell_price))
                         
-                    # Coloco el profit en la variable (en pips)
-                    total_profit_pips += profit_pips
-                    # Usando la variable pip_value que ya definiste
-                    profit_dollars_total += profit_dollars
+                elif action == 4 and len(trader.inventory_sell) > 0:  # Cerrar venta en corto
+                    original_sell_price = trader.inventory_sell.pop(0)
                     
-                    # Suma al contador de trades
+                    # USAR FUNCIÓN OPTIMIZADA
+                    profit_pips, profit_dollars = calculate_short_profit_fast(
+                        original_sell_price, buy_price, pip_value_eur_usd, trader.commission_per_trade, lot_size
+                    )
+                    
+                    pip_drawdrow_real, profit_drawdrow_real = calculate_short_profit_fast(
+                        original_sell_price, best_high, pip_value_eur_usd, trader.commission_per_trade, lot_size
+                    )
+                    
+                    # Actualizar variables (mismo código que arriba)
+                    total_profit_pips += profit_pips
+                    profit_dollars_total += profit_dollars
                     trades_count += 1
-       
-                    current_drawdown_real +=profit_drawdrow_real
-                    current_equity += profit_dollars  
+                    current_drawdown_real += profit_drawdrow_real
+                    current_equity += profit_dollars
                     
                     if current_equity > peak_equity:
                         peak_equity = current_equity
@@ -406,64 +439,55 @@ def main():
                     
                     if current_drawdown_real > peak_equity_drawdrown_real:
                         peak_equity_drawdrown_real = current_drawdown_real
-
-                    # Agrega el retorno al retorno del episodio cada profit (en pips)
+    
                     episode_returns_pips.append(profit_pips)
                     
                     reward, _ = calculate_advanced_reward(
-                            reward_system, profit_dollars, current_equity, peak_equity,
-                            episode_returns_pips, is_trade_closed=True
-                        )
-                    # Verifica si el profit salio ganador agrefa uno a wins y agrega el profit a winning_profits (en pips)
+                        reward_system, profit_dollars, current_equity, peak_equity,
+                        episode_returns_pips, is_trade_closed=True
+                    )
+                    
                     if profit_pips > 0:
                         wins += 1
                         winning_profits_pips.append(profit_pips)
-                    # De lo contrario si sale perdedor se agrega uno a lose y agrega el profit a losing_profits (en pips)
                     else:
                         losses += 1
                         losing_profits_pips.append(profit_pips)
-                    if episode == episodes and fold == n_folds -1 : sell_points.append((timestamp, sell_price))
                         
-            
-                    #print(f"tiempo {t} de {data_samples} , episodio: {episode} ,recompensa:{reward:.2f} , por eleccion de ia CERRO Venta a {original_sell_price:.5f}, Compra a {buy_price:.5f}, Profit (pips): {profit_pips:.2f}, Profit (USD): {profit_dollars:.2f}, total de dinero actual {current_equity:.2f}")
-                   #print("")
-                    #print(f"suma de recompensa {trader.total_rewards}")
-                    #print("")
+                    if episode == episodes and fold == n_folds - 1:
+                        sell_points.append((timestamp, sell_price))
+                    
+                    best_low = 9999999.0
+                    best_high = 0.0
                     
                     
-                elif( len(trader.inventory) > 0 or len(trader.inventory_sell) > 0) and 'time' in data.columns and data['time'].notnull().all() and int(hora.iloc[t].split(":")[0]) == 23   :
-                    # Toma el precio que compro el activo
-                    if  len(trader.inventory) > 0:
+                elif (len(trader.inventory) > 0 or len(trader.inventory_sell) > 0) and has_time and \
+                     t < len(hora_values) and int(hora_values[t].split(":")[0]) == 23:
+                    
+                    if len(trader.inventory) > 0:
                         original_buy_price = trader.inventory.pop(0)
-                        profit_pips = (sell_price - original_buy_price) 
-                            # Calcula la ganancia/pérdida en dólares
-                        pip_drawdrow_real = (  best_low - original_buy_price)
-                        profit_drawdrow_real = (pip_drawdrow_real * pip_value_eur_usd) - ( trader.commission_per_trade * lot_size)
-                        profit_dollars =( profit_pips * pip_value_eur_usd) - ( trader.commission_per_trade * lot_size) 
-                        
+                        profit_pips, profit_dollars = calculate_profit_fast(
+                            original_buy_price, sell_price, pip_value_eur_usd, trader.commission_per_trade, lot_size
+                        )
+                        pip_drawdrow_real, profit_drawdrow_real = calculate_profit_fast(
+                            original_buy_price, best_low, pip_value_eur_usd, trader.commission_per_trade, lot_size
+                        )
                         
                     elif len(trader.inventory_sell) > 0:
                         original_sell_price = trader.inventory_sell.pop(0)
-                        profit_pips = (original_sell_price - buy_price ) 
-                        pip_drawdrow_real = ( original_sell_price -  best_high )
-                            # Calcula la ganancia/pérdida en dólares
-                        profit_drawdrow_real = (pip_drawdrow_real * pip_value_eur_usd) - ( trader.commission_per_trade * lot_size) 
-                        profit_dollars = (profit_pips * pip_value_eur_usd) - ( trader.commission_per_trade * lot_size) 
-                            
+                        profit_pips, profit_dollars = calculate_short_profit_fast(
+                            original_sell_price, buy_price, pip_value_eur_usd, trader.commission_per_trade, lot_size
+                        )
+                        pip_drawdrow_real, profit_drawdrow_real = calculate_short_profit_fast(
+                            original_sell_price, best_high, pip_value_eur_usd, trader.commission_per_trade, lot_size
+                        )
                     
-                    
-                    # vender forzadamente por cierre de jornada, por ejemplo      
-                    # Coloco el profit en la variable (en pips)
+                    # Misma lógica de actualización que arriba
                     total_profit_pips += profit_pips
-                    # Usando la variable pip_value que ya definiste
-                    profit_dollars_total +=  profit_dollars
-                    
-
-                    # Suma al contador de trades
+                    profit_dollars_total += profit_dollars
                     trades_count += 1
-                    
-                    current_drawdown_real +=profit_drawdrow_real
-                    current_equity += profit_dollars # Asumiendo EUR es la base
+                    current_drawdown_real += profit_drawdrow_real
+                    current_equity += profit_dollars
                     
                     if current_equity > peak_equity:
                         peak_equity = current_equity
@@ -472,33 +496,27 @@ def main():
                     
                     if current_drawdown_real > peak_equity_drawdrown_real:
                         peak_equity_drawdrown_real = current_drawdown_real
-
-                    # Agrega el retorno al retorno del episodio cada profit (en pips)
+    
                     episode_returns_pips.append(profit_pips)
                     
                     reward, reward_components = calculate_advanced_reward(
-                            reward_system, profit_dollars, current_equity, peak_equity,
-                            episode_returns_pips, is_trade_closed=True)
+                        reward_system, profit_dollars, current_equity, peak_equity,
+                        episode_returns_pips, is_trade_closed=True
+                    )
                     
-                    # Verifica si el profit salio ganador agrefa uno a wins y agrega el profit a winning_profits (en pips)
                     if profit_pips > 0:
                         wins += 1
                         winning_profits_pips.append(profit_pips)
-                    # De lo contrario si sale perdedor se agrega uno a lose y agrega el profit a losing_profits (en pips)
                     else:
                         losses += 1
                         losing_profits_pips.append(profit_pips)
-                    if episode == episodes and fold == n_folds -1 : sell_points.append((timestamp, sell_price))
-                
-                   
-                    #print(f"tiempo {t} de {data_samples} , episodio: {episode} ,recompensa:{reward:.2f}, Venta a {sell_price:.5f}, Compra a {original_buy_price:.5f}, Profit (pips): {profit_pips:.2f}, Profit (USD): {profit_dollars:.2f}, total de dinero actual {current_equity:.2f}")
-    
+                        
+                    if episode == episodes and fold == n_folds - 1:
+                        sell_points.append((timestamp, sell_price))
                 
                                     
                 drawdown_real = (peak_equity_drawdrown_real - current_drawdown_real) / peak_equity_drawdrown_real if peak_equity_drawdrown_real != 0 else 0
-                # Calculo de drawdown como ($1070 - $1050) / $1070 ≈ 0.0187 o 1.87%.
                 drawdown = (peak_equity - current_equity) / peak_equity if peak_equity != 0 else 0
-                # Se agrega al array para ver cual es el max drawdown 
                 
               
                 drawdown_history_episode.append(drawdown)
@@ -515,125 +533,96 @@ def main():
                 
                 
                 
-                if len(trader.memory) > batch_size:
-                    #entrenamiento !!!!! 
+                if len(trader.memory) > batch_size and t % 10 == 0:  # Solo cada 10 pasos
                     current_loss = trader.batch_train(batch_size)
-                
-                
-                if mostrar_prints:
-                    if t % 1500 == 0:
-                        print("")
-                        print(f"""
-tiempo {t} de {data_samples} ,
-episodio: {episode} ,
-suma de recompensa {reward_episode},
-total de dinero actual {current_equity:.2f},
-loss = {current_loss}
-                          """)                
-                        print("")
-                    
-                    
+            
+            # MOSTRAR PRINTS MENOS FRECUENTEMENTE
+                if mostrar_prints and t % 3000 == 0:  # Aumenté la frecuencia
+                    print(f"Tiempo {t}/{data_samples}, Episodio: {episode}, Recompensa: {reward_episode:.2f}, Equity: {current_equity:.2f}")
 
-            sharpe = calculate_sharpe_ratio(np.array(episode_returns_pips))
+        # Calcular métricas finales del episodio
+            sharpe = calculate_sharpe_ratio(np.array(episode_returns_pips)) if episode_returns_pips else 0
             accuracy = wins / trades_count if trades_count > 0 else 0
             avg_win = np.mean(winning_profits_pips) if winning_profits_pips else 0
             avg_loss = np.mean(losing_profits_pips) if losing_profits_pips else 0
             max_drawdown = max(drawdown_history_episode) if drawdown_history_episode else 0
             max_drawdown_real = max(drawdown_real_history_episode) if drawdown_real_history_episode else 0
-            #if(episode % 5 == 0):
-               # enviar_alerta(f"Jefe vamos en el episodio {episode} y el total de recompensa es de {trader.total_rewards:.2f}. con un total en dinero de: {price_format(profit_dollars_total)} ")
-            reward_system.reset_episode()
-              
             
-            print("")
-            print("===========================================================================")
-            print(f"""Fin Episodio {episode}: 
-                  Beneficio (pips)={total_profit_pips}
-                  Beneficio (usd)={price_format(profit_dollars_total)}
-                  Trades={trades_count}
-                  Peor balance={worse_equity}
-                  Mejor Balance = {peak_equity}
-                  wins={wins}
-                  Sharpe={sharpe:.2f}
-                  Maximo drawdown = {max_drawdown_real:.2%}
-                  Drawdown={max_drawdown:.2%}
-                  Accuracy={accuracy:.2%}
-                  total de dinero actual {current_equity:.2f}
-                  Recompensa profit = {reward_system.sumaRecompensaProfit}
-                  Recompensa Sharpe = {reward_system.sumaRecompensaSharpe}
-                  Recompensa Drawndown = {reward_system.sumaRecompensaDrawndown}
-                  Recompensa Consistencia  = {reward_system.sumaRecompensaConsistency} 
-                  Recompensa Risk ajustado = {reward_system.sumaRecompensaRiskAdjusted}
-                  Recompensa momentum = {reward_system.sumaRecompensaMomentum }
-                  Recompensa calidad de trade = {reward_system.sumaRecompensaTradeQuality}
-                  """)
-            print("")
-            print(f"total de recompensas del episodio: {reward_episode:.2f} ")
-            print("===========================================================================")
-            print("")
+            reward_system.reset_episode()
+            
+            # MOSTRAR RESULTADOS MENOS FRECUENTEMENTE
+            # Solo cada 10 episodios o el último
+            print(f"""
+    Episodio {episode}: 
+    Beneficio (pips)={total_profit_pips:.2f}
+    Beneficio (usd)={price_format(profit_dollars_total)}
+    Trades={trades_count}
+    Wins={wins}
+    Sharpe={sharpe:.2f}
+    Drawdown={max_drawdown:.2%}
+    Accuracy={accuracy:.2%}
+    Equity={current_equity:.2f}
+                """)
+            
+            # Guardar estadísticas
             trader.profit_history.append(profit_dollars_total)
             trader.epsilon_history.append(trader.epsilon)
             trader.trades_history.append(trades_count)
             trader.rewards_history.append(trader.total_rewards)
             trader.rewards_history_episode.append(reward_episode)
-            #trader.loss_history.append(np.mean(trader.loss_history[-10:]) if trader.loss_history else 0)
             trader.drawdown_history.append(max_drawdown)
             trader.sharpe_ratios.append(sharpe)
             trader.accuracy_history.append(accuracy)
             trader.avg_win_history.append(avg_win)
             trader.avg_loss_history.append(avg_loss)
             
-            if episode % cada_cuantos_episodes_guardar_el_modelo == 0  :
-                trader.plot_training_metrics(save_path=resultados_dir )
+            # GUARDAR MODELO MENOS FRECUENTEMENTE
+            if episode % cada_cuantos_episodes_guardar_el_modelo == 0:  # Menos frecuente
+                trader.plot_training_metrics(save_path=resultados_dir)
                 trader.save_model(os.path.join(resultados_dir, nombre_modelo_guardado))
                 
-                if guardar_estadisticas_en_backend == True:
+                if guardar_estadisticas_en_backend:
                     status, result = upload_training_data(
-                    url = 'https://back-para-entrenamiento.onrender.com/api/upload',
-                    model_file_path="no",
-                    graph_image_paths=[],
-                    episode=episode,
-                    reward=trader.total_rewards,
-                    loss=avg_loss,
-                    profit_usd=current_equity,
-                    epsilon=trader.epsilon,
-                    drawdown=max_drawdown,
-                    hit_frequency=accuracy
+                        url = 'https://back-para-entrenamiento.onrender.com/api/upload',
+                        model_file_path="no",
+                        graph_image_paths=[],
+                        episode=episode,
+                        reward=trader.total_rewards,
+                        loss=avg_loss,
+                        profit_usd=current_equity,
+                        epsilon=trader.epsilon,
+                        drawdown=max_drawdown,
+                        hit_frequency=accuracy
                     )
-                    
-                    print('Status:', status)
-                    print('Resultado:', result)
                 
-                if guardar_en_dropbox :
-                    local_file_path =[ f'resultados_cv/{nombre_modelo_guardado}.h5',
-                                      f'resultados_cv/{nombre_modelo_guardado}_params.txt' ,
-                                      f'resultados_cv/{nombre_modelo_guardado}_target.h5' ,
-                                      "resultados_cv/training_metrics.png"
-                                      ]
+                if guardar_en_dropbox:
+                    local_file_path =[
+                        f'resultados_cv/{nombre_modelo_guardado}.h5',
+                        f'resultados_cv/{nombre_modelo_guardado}_params.txt',
+                        f'resultados_cv/{nombre_modelo_guardado}_target.h5',
+                        "resultados_cv/training_metrics.png"
+                    ]
                     
                     for file in local_file_path:
                         dropbox_destination_path = f"/{os.path.basename(file)}"
                         with open(file, 'rb') as f:
                             dbx.files_upload(f.read(), dropbox_destination_path, mode=dropbox.files.WriteMode.overwrite)
-                    
-                    print("Archivos subidos exitosamente a Dropbox.")
-            
-            
 
-        if buy_points or sell_points:
-            plot_trading_session(fold_data, buy_points, sell_points, symbol, intervalo, save_path=resultados_dir)
+    # Plotting final
+    if buy_points or sell_points:
+        plot_trading_session(fold_data, buy_points, sell_points, symbol, intervalo, save_path=resultados_dir)
 
-        fold_metrics = {
-            'fold': fold + 1,
-            'final_profit_pips': total_profit_pips,
-            'total_trades': trades_count,
-            'final_sharpe': sharpe,
-            'max_drawdown': max_drawdown,
-            'final_accuracy': accuracy,
-            'avg_win_pips': avg_win,
-            'avg_loss_pips': avg_loss
-        }
-        all_fold_metrics.append(fold_metrics)
+    fold_metrics = {
+        'fold': fold + 1,
+        'final_profit_pips': total_profit_pips,
+        'total_trades': trades_count,
+        'final_sharpe': sharpe,
+        'max_drawdown': max_drawdown,
+        'final_accuracy': accuracy,
+        'avg_win_pips': avg_win,
+        'avg_loss_pips': avg_loss
+    }
+    all_fold_metrics.append(fold_metrics)
 
     print("\n{'='*30} Resultados de Validación Cruzada {'='*30}")
     metrics_df = pd.DataFrame(all_fold_metrics)
@@ -645,13 +634,15 @@ loss = {current_loss}
     print("\n{'='*30} Evaluación en Conjunto de Prueba {'='*30}")
     if len(test_data) > window_size:
         test_samples = len(test_data) - 1
-   
-        test_states = np.array([state_creator_vectorized(test_data, t, window_size) for t in range(test_samples)]) # Usa la función vectorizada
 
-        test_profit_pips = 0
-        test_inventory = []
+        print("Generando estados para el conjunto de prueba...")
+        test_states = np.array([state_creator_vectorized(test_data, t, window_size) for t in range(test_samples)])
+        print(f"Estados de prueba generados: {len(test_states)}")
+
+        test_total_profit_pips = 0
+        test_inventory = [] # Agent's inventory for test
+        test_inventory_sell = [] # Agent's inventory for short positions for test
         test_trades = 0
-        test_profit_dollars = 0
         test_profit_dollars_total = 0
         test_returns_pips = []
         test_peak_equity = balance_first
@@ -663,52 +654,72 @@ loss = {current_loss}
         losses_test = 0
         winning_profits_test_pips = []
         losing_profits_test_pips = []
-        
-        if 'time' in test_data.columns and test_data['time'].notnull().all():
-            hora_test = test_data['time']
-        
+        best_low_test = 9999999.0
+        best_high_test = 0.0
+
+        # Pre-calculate test data components
+        test_close_prices = test_data['close'].values
+        test_low_prices = test_data['low'].values
+        test_high_prices = test_data['high'].values
+        test_spreads = test_data['spread'].values
+        test_timestamps = test_data.index.values
+
+        # Check for 'time' and 'ema_diference_close' in test_data specifically
+        has_time_test = 'time' in test_data.columns and test_data['time'].notnull().all()
+        hora_test_values = test_data['time'].values if has_time_test else None
+
+        has_alcista_test = 'ema_diference_close' in test_data.columns and test_data['ema_diference_close'].notnull().all()
+        alcista_test_values = test_data['ema_diference_close'].values if has_alcista_test else None
+
 
         for t in range(test_samples):
-            test_action = trader.trade(test_states[t])
-            current_price = test_data['close'].iloc[t].item()
-            spread_test = test_data['spread'].iloc[t].item() * lot_size
-            timestamp = test_data.index[t]
-            
-            
-            buy_price_test = current_price + spread_test / 2 if test_action == 1 else current_price
-            sell_price_test = current_price - spread_test / 2 if test_action == 2 and len(test_inventory) > 0 else current_price
-            
-            if test_action == 1 and not test_inventory:
-                test_inventory.append(buy_price_test)
-            
-                #if(not es_indice):
-                   # test_current_equity -= buy_price_test * lot_size * 100000 * (1 + trader.commission_per_trade)
-                test_buy_points.append((timestamp, buy_price_test))
-                
-                
-            elif test_action == 2 and len(test_inventory) > 0:
-                original_buy_price_test = test_inventory.pop(0)
-                
-                if (es_indice):
-                    profit_test_pips = (sell_price_test - original_buy_price_test) 
-                    ticks = profit_test_pips  / 0.25   
-                    test_profit_dollars = ticks * tick_value * (lot_size / 1.0)
-                elif(es_forex): 
-                    profit_test_pips = (sell_price_test - original_buy_price_test) * pip_multiplier
-                    test_profit_dollars = profit_test_pips * pip_value_eur_usd
-                elif(es_metal):
-                    profit_test_pips = (sell_price_test - original_buy_price_test) 
-                    test_profit_dollars = (profit_test_pips *pip_value_eur_usd ) -(trader.commission_per_trade * lot_size)
+            # The agent is in evaluation mode, so epsilon is very low/0 (greedy action)
+            test_action = trader.trade(test_states[t]) # Assuming AI_Trader has an is_eval mode for greedy actions
+            current_price_test = test_close_prices[t]
+            current_low_test = test_low_prices[t]
+            current_high_test = test_high_prices[t]
+            spread_test = test_spreads[t]
+            timestamp_test = test_timestamps[t]
 
-                test_profit_pips += profit_test_pips
+            current_buy_exec_price_test = current_price_test + (spread_test * 0.5)
+            current_sell_exec_price_test = current_price_test - (spread_test * 0.5)
+
+            if len(test_inventory) > 0 and current_low_test < best_low_test:
+                best_low_test = current_low_test
+            elif len(test_inventory) <= 0:
+                best_low_test = 9999999.0
+
+            if len(test_inventory_sell) > 0 and current_high_test > best_high_test:
+                best_high_test = current_high_test
+            elif len(test_inventory_sell) <= 0:
+                best_high_test = 0.0
+
+
+            if test_action == 1 and not test_inventory: # Buy
+                test_inventory.append(current_buy_exec_price_test)
+                test_buy_points.append((timestamp_test, current_buy_exec_price_test))
+
+
+            elif test_action == 2 and len(test_inventory) > 0: # Sell (close long)
+                original_buy_price_test = test_inventory.pop(0)
+
+                profit_test_pips, profit_test_dollars = calculate_profit_fast(
+                    original_buy_price_test, current_sell_exec_price_test, pip_value_eur_usd, trader.commission_per_trade, lot_size
+                )
+                # For test, we don't need `pip_drawdrow_real` for reward calculation, but we can track for metrics
+                _, _ = calculate_profit_fast(
+                    original_buy_price_test, best_low_test, pip_value_eur_usd, trader.commission_per_trade, lot_size
+                )
+
+
+                test_total_profit_pips += profit_test_pips
                 test_trades += 1
-                test_profit_dollars_total +=test_profit_dollars
-                if (es_indice):
-                    # Calcula cuanto dinero tiene (considerando el lote)
-                    test_current_equity += test_profit_dollars 
-                else:
-                    test_current_equity += test_profit_dollars 
-                
+                test_profit_dollars_total += profit_test_dollars
+                test_current_equity += profit_test_dollars
+
+                if test_current_equity > test_peak_equity:
+                    test_peak_equity = test_current_equity
+
                 test_returns_pips.append(profit_test_pips)
                 if profit_test_pips > 0:
                     wins_test += 1
@@ -716,32 +727,35 @@ loss = {current_loss}
                 else:
                     losses_test += 1
                     losing_profits_test_pips.append(profit_test_pips)
-                
-                test_sell_points.append((timestamp, sell_price_test))
-            
-            elif 'time' in test_data.columns and test_data['time'].notnull().all() and int(hora_test.iloc[t].split(":")[0]) == 23 and len(trader.inventory) > 0:
-                original_buy_price_test = test_inventory.pop(0)
-                
-                if (es_indice):
-                    profit_test_pips = (sell_price_test - original_buy_price_test) 
-                    ticks = profit_pips / 0.25   
-                    test_profit_dollars = ticks * tick_value * (lot_size / 1.0)
-                elif(es_forex): 
-                    profit_test_pips = (sell_price_test - original_buy_price_test) * pip_multiplier
-                    test_profit_dollars = profit_test_pips * pip_value_eur_usd
-                elif(es_metal):
-                    profit_test_pips = (sell_price_test - original_buy_price_test) 
-                    test_profit_dollars = (profit_test_pips *pip_value_eur_usd ) - (trader.commission_per_trade * lot_size)
-                                    
-                test_profit_pips += profit_test_pips
+
+                test_sell_points.append((timestamp_test, current_sell_exec_price_test))
+
+                best_low_test = 9999999.0
+                best_high_test = 0.0
+
+            elif test_action == 3 and len(test_inventory_sell) <= 0: # Short Sell (open short)
+                test_inventory_sell.append(current_sell_exec_price_test)
+                test_sell_points.append((timestamp_test, current_sell_exec_price_test))
+
+            elif test_action == 4 and len(test_inventory_sell) > 0: # Buy to Close Short
+                original_sell_price_test = test_inventory_sell.pop(0)
+
+                profit_test_pips, profit_test_dollars = calculate_short_profit_fast(
+                    original_sell_price_test, current_buy_exec_price_test, pip_value_eur_usd, trader.commission_per_trade, lot_size
+                )
+                # For test, we don't need `pip_drawdrow_real` for reward calculation
+                _, _ = calculate_short_profit_fast(
+                    original_sell_price_test, best_high_test, pip_value_eur_usd, trader.commission_per_trade, lot_size
+                )
+
+                test_total_profit_pips += profit_test_pips
                 test_trades += 1
-                test_profit_dollars_total +=test_profit_dollars
-                if (es_indice):
-                    # Calcula cuanto dinero tiene (considerando el lote)
-                    test_current_equity += test_profit_dollars 
-                else:
-                    test_current_equity += test_profit_dollars
-                
+                test_profit_dollars_total += profit_test_dollars
+                test_current_equity += profit_test_dollars
+
+                if test_current_equity > test_peak_equity:
+                    test_peak_equity = test_current_equity
+
                 test_returns_pips.append(profit_test_pips)
                 if profit_test_pips > 0:
                     wins_test += 1
@@ -749,24 +763,77 @@ loss = {current_loss}
                 else:
                     losses_test += 1
                     losing_profits_test_pips.append(profit_test_pips)
-                
-                test_sell_points.append((timestamp, sell_price_test))
 
+                test_buy_points.append((timestamp_test, current_buy_exec_price_test))
 
-            if test_current_equity > test_peak_equity:
-                test_peak_equity = test_current_equity
-            test_drawdown = (test_peak_equity - test_current_equity) / test_peak_equity if test_peak_equity != 0 else 0
+                best_low_test = 9999999.0
+                best_high_test = 0.0
 
-            test_drawdown_history.append(test_drawdown)
+            # Time-based closure for test data, similar to training
+            elif (len(test_inventory) > 0 or len(test_inventory_sell) > 0) and has_time_test and \
+                 t < len(hora_test_values) and int(hora_test_values[t].split(":")[0]) == 23:
 
-        test_sharpe = calculate_sharpe_ratio(np.array(test_returns_pips))
+                if len(test_inventory) > 0: # Close long
+                    original_buy_price_test = test_inventory.pop(0)
+                    profit_test_pips, profit_test_dollars = calculate_profit_fast(
+                        original_buy_price_test, current_sell_exec_price_test, pip_value_eur_usd, trader.commission_per_trade, lot_size
+                    )
+                    test_sell_points.append((timestamp_test, current_sell_exec_price_test))
+
+                elif len(test_inventory_sell) > 0: # Close short
+                    original_sell_price_test = test_inventory_sell.pop(0)
+                    profit_test_pips, profit_test_dollars = calculate_short_profit_fast(
+                        original_sell_price_test, current_buy_exec_price_test, pip_value_eur_usd, trader.commission_per_trade, lot_size
+                    )
+                    test_buy_points.append((timestamp_test, current_buy_exec_price_test))
+
+                test_total_profit_pips += profit_test_pips
+                test_trades += 1
+                test_profit_dollars_total += profit_test_dollars
+                test_current_equity += profit_test_dollars
+
+                if test_current_equity > test_peak_equity:
+                    test_peak_equity = test_current_equity
+
+                test_returns_pips.append(profit_test_pips)
+                if profit_test_pips > 0:
+                    wins_test += 1
+                    winning_profits_test_pips.append(profit_test_pips)
+                else:
+                    losses_test += 1
+                    losing_profits_test_pips.append(profit_test_pips)
+
+                best_low_test = 9999999.0
+                best_high_test = 0.0
+
+            # Calculate and append drawdown for testing
+            test_current_drawdown = (test_peak_equity - test_current_equity) / test_peak_equity if test_peak_equity != 0 else 0
+            test_drawdown_history.append(test_current_drawdown)
+
+        # Final calculations for the test set
+        test_sharpe = calculate_sharpe_ratio(np.array(test_returns_pips)) if test_returns_pips else 0
         test_accuracy = wins_test / test_trades if test_trades > 0 else 0
+        test_avg_win = np.mean(winning_profits_test_pips) if winning_profits_test_pips else 0
+        test_avg_loss = np.mean(losing_profits_test_pips) if losing_profits_test_pips else 0
         test_max_drawdown = max(test_drawdown_history) if test_drawdown_history else 0
-        avg_win_test = np.mean(winning_profits_test_pips) if winning_profits_test_pips else 0
-        avg_loss_test = np.mean(losing_profits_test_pips) if losing_profits_test_pips else 0
 
-        print(f"Resultados en Prueba: Beneficio (pips)={price_format(test_profit_pips)},Beneficio (dollar) = {test_profit_dollars_total} Trades={test_trades}, Sharpe={test_sharpe:.2f}, Drawdown={test_max_drawdown:.2%}, Accuracy={test_accuracy:.2%}")
-        plot_trading_session(test_data, test_buy_points, test_sell_points, symbol, intervalo, save_path=resultados_dir)
+        print(f"""
+    Resultados del Test Final:
+    Beneficio (pips)={test_total_profit_pips:.2f}
+    Beneficio (usd)={price_format(test_profit_dollars_total)}
+    Trades={test_trades}
+    Wins={wins_test}
+    Sharpe={test_sharpe:.2f}
+    Drawdown={test_max_drawdown:.2%}
+    Accuracy={test_accuracy:.2%}
+    Equity Final={test_current_equity:.2f}
+        """)
+
+        # Plotting the test trading session
+        plot_trading_session(test_data, test_buy_points, test_sell_points, symbol, intervalo, save_path=resultados_dir,
+                            )
+    else:
+        print("El conjunto de prueba es demasiado pequeño para realizar la evaluación.")
 
 def run_main():
     main()
