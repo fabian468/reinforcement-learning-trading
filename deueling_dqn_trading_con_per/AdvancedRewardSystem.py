@@ -14,261 +14,152 @@ mandar el current equity actual y el peak equity actual calculado con el profit 
 import numpy as np
 from collections import deque
 
-
 class AdvancedRewardSystem:
     def __init__(self, initial_balance=100, risk_free_rate=0.02):
         self.initial_balance = initial_balance
+        self.inv_initial_balance = 1.0 / initial_balance if initial_balance != 0 else 0
         self.risk_free_rate = risk_free_rate / 252  # Tasa diaria
-        
-        # Buffers para métricas móviles
+
         self.returns_buffer = deque(maxlen=50)
         self.equity_buffer = deque(maxlen=50)
         self.drawdown_buffer = deque(maxlen=30)
-        self.previous_equity = initial_balance  # Para calcular drawdown incremental
-        
+
+        self.previous_equity = initial_balance
+
         self.sumaRecompensaProfit = 0
         self.sumaRecompensaSharpe = 0
         self.sumaRecompensaDrawndown = 0
-        self.sumaRecompensaConsistency =0
+        self.sumaRecompensaConsistency = 0
         self.sumaRecompensaRiskAdjusted = 0
         self.sumaRecompensaMomentum = 0
         self.sumaRecompensaTradeQuality = 0
-        
-        # Pesos para componentes de recompensa
+
         self.weights = {
-            'profit': 1.1,           # Base profit
-            'sharpe': 0.5,          # Sharpe ratio component
-            'drawdown': 0.3,       # Penalización por drawdown
-            'consistency': 0.2,     # Consistencia de retornos
-            'risk_adjusted': 0.4,   # Retorno ajustado por riesgo
-            'momentum': 0.2,        # Momentum de equity
-            'trade_quality': 0.2    # Calidad del trade pero al ser un valor de 0.3 disminuye el retorno de negativo o positivo
+            'profit': 1.1,
+            'sharpe': 0.5,
+            'drawdown': 0.1,
+            'consistency': 0.4,
+            'risk_adjusted': 0.4,
+            'momentum': 0.5,
+            'trade_quality': 0.2
         }
 
-    def calculate_reward(self, profit_dollars, current_equity, peak_equity, 
-                        trade_returns_history, is_trade_closed=False):
-        """
-        Calcula recompensa multi-objetivo optimizada
-        """
+        self.sum_map = {
+            'profit': 'sumaRecompensaProfit',
+            'sharpe': 'sumaRecompensaSharpe',
+            'drawdown': 'sumaRecompensaDrawndown',
+            'consistency': 'sumaRecompensaConsistency',
+            'risk_adjusted': 'sumaRecompensaRiskAdjusted',
+            'momentum': 'sumaRecompensaMomentum',
+            'trade_quality': 'sumaRecompensaTradeQuality'
+        }
+
+    def calculate_reward(self, profit_dollars, current_equity, peak_equity, trade_returns_history, is_trade_closed=False):
         reward_components = {}
-        
-        #print(f"Pesos multiplicadores de r:{self.weights}")
-        
-        # 1. Componente base de profit (normalizado)
-       
-        #normalized_profit = profit_dollars / self.initial_balance
-        normalized_profit= profit_dollars
-        reward_components['profit'] = normalized_profit
-        
-        # 2. Componente de Sharpe Ratio (solo si hay suficientes datos)
-        if len(self.returns_buffer) >= 10:
-            sharpe_reward = self._calculate_sharpe_component()
-            reward_components['sharpe'] = sharpe_reward
-        else:
-            reward_components['sharpe'] = 0
-        
-        # 3. Penalización por Drawdown (más sofisticada)
-        drawdown_penalty = self._calculate_drawdown_penalty(current_equity, peak_equity)
-        reward_components['drawdown'] = drawdown_penalty
-        
-        # 4. Componente de consistencia
-        consistency_reward = self._calculate_consistency_reward()
-        reward_components['consistency'] = consistency_reward
-        
-        # 5. Retorno ajustado por riesgo
-        risk_adjusted_reward = self._calculate_risk_adjusted_reward(profit_dollars)
-        reward_components['risk_adjusted'] = risk_adjusted_reward
-        
-        # 6. Momentum de equity
-        momentum_reward = self._calculate_momentum_reward(current_equity)
-        reward_components['momentum'] = momentum_reward
-        
-        # 7. Calidad del trade (solo si se cerró un trade)
-        if is_trade_closed and profit_dollars != 0:
-            trade_quality_reward = self._calculate_trade_quality_reward(profit_dollars)
-            reward_components['trade_quality'] = trade_quality_reward
-        else:
-            reward_components['trade_quality'] = 0
-        
-        # Calcular recompensa final ponderada
+
+        reward_components['profit'] = profit_dollars
+
+        returns_np = np.fromiter(self.returns_buffer, dtype=np.float32) if len(self.returns_buffer) > 0 else None
+
+        reward_components['sharpe'] = self._calculate_sharpe_component(returns_np) if returns_np is not None and len(returns_np) >= 10 else 0
+        reward_components['drawdown'] = self._calculate_drawdown_penalty(current_equity, peak_equity)
+        reward_components['consistency'] = self._calculate_consistency_reward(returns_np) if returns_np is not None and len(returns_np) >= 5 else 0
+        reward_components['risk_adjusted'] = self._calculate_risk_adjusted_reward(profit_dollars, returns_np) if returns_np is not None and len(returns_np) >= 5 else 0
+        reward_components['momentum'] = self._calculate_momentum_reward(current_equity)
+        reward_components['trade_quality'] = self._calculate_trade_quality_reward(profit_dollars, returns_np) if is_trade_closed and profit_dollars != 0 and returns_np is not None and len(returns_np) >= 5 else 0
+
         total_reward = 0.0
         for component, value in reward_components.items():
-            weight = self.weights.get(component, 0.0)
-            weighted_value = weight * value
-            #print(f"{component}: valor={value:.4f}, peso={weight:.4f}, ponderado={weighted_value:.4f}")
+            weighted_value = self.weights.get(component, 0.0) * value
+            setattr(self, self.sum_map[component], getattr(self, self.sum_map[component]) + weighted_value)
             total_reward += weighted_value
-            
-            if component == 'profit':
-                self.sumaRecompensaProfit += weighted_value
-            elif component == 'sharpe':
-                self.sumaRecompensaSharpe += weighted_value
-            elif component == 'drawdown':
-                self.sumaRecompensaDrawndown += weighted_value
-            elif component == 'consistency':
-                self.sumaRecompensaConsistency += weighted_value
-            elif component == 'risk_adjusted':
-                self.sumaRecompensaRiskAdjusted += weighted_value
-            elif component == 'momentum':
-                self.sumaRecompensaMomentum += weighted_value
-            elif component == 'trade_quality':
-                self.sumaRecompensaTradeQuality += weighted_value
 
-        # Actualizar buffers
-        self._update_buffers(profit_dollars, current_equity, current_equity/peak_equity if peak_equity > 0 else 1)
-        
+        self._update_buffers(profit_dollars, current_equity, current_equity / peak_equity if peak_equity > 0 else 1.0)
+
         return total_reward, reward_components
-    
-    def _calculate_sharpe_component(self):
-        """Calcula componente de recompensa basado en Sharpe ratio"""
-        if len(self.returns_buffer) < 10:
+
+    def _calculate_sharpe_component(self, returns):
+        std = np.std(returns)
+        if std == 0:
             return 0
-        
-        returns = np.array(list(self.returns_buffer))
-        if np.std(returns) == 0:
-            return 0
-        
         excess_returns = returns - self.risk_free_rate
-        sharpe = np.mean(excess_returns) / np.std(returns)
-        
-        # Normalizar Sharpe ratio (tanh para límites suaves)
-        normalized_sharpe = np.tanh(sharpe / 2)  # Divide por 2 para escalar
-        return normalized_sharpe
-    
+        sharpe = np.mean(excess_returns) / std
+        return np.tanh(sharpe / 2)
+
     def _calculate_drawdown_penalty(self, current_equity, peak_equity):
         if peak_equity <= 0:
             return 0.0
-    
-        drawdown_percentage = (peak_equity - current_equity) / peak_equity
-    
-        # Penalización si hay un drawdown significativo.
-        # Puedes ajustar los multiplicadores y umbrales.
-        if drawdown_percentage > 0.05: # Si el drawdown es superior al 5%
-            penalty = - drawdown_percentage * 1.5 # Penaliza más fuerte
+        inv_peak = 1.0 / peak_equity
+        drawdown_percentage = (peak_equity - current_equity) * inv_peak
+        if drawdown_percentage > 0.05:
+            penalty = -drawdown_percentage * 1.5
         elif drawdown_percentage > 0:
-            penalty = - drawdown_percentage * 0.5 # Penaliza menos para pequeños drawdowns
+            penalty = -drawdown_percentage * 0.5
         else:
-            penalty = 0.0 # No hay drawdown o es ganancia
-    
-        return penalty
-    
-    def _calculate_consistency_reward(self):
-        """Recompensa por consistencia en retornos"""
-        if len(self.returns_buffer) < 5:
-            return 0
-        
-        returns = np.array(list(self.returns_buffer))
-        if len(returns) == 0:
-            return 0
-        
-        # Calcular coeficiente de variación (menor es mejor)
+            penalty = 0.0
+        return np.tanh(penalty) * 0.5
+
+    def _calculate_consistency_reward(self, returns):
         mean_return = np.mean(returns)
         std_return = np.std(returns)
-        
         if std_return == 0:
             return 0.1 if mean_return >= 0 else -0.1
-        
         cv = abs(std_return / mean_return) if mean_return != 0 else float('inf')
-        
-        # Recompensa inversa al coeficiente de variación
-        consistency_score = 1 / (1 + cv)
-        
-        if mean_return < 0:
-            consistency_score *= -1 
-        
-        return consistency_score # Centrar en 0
-    
-    def _calculate_risk_adjusted_reward(self, profit_dollars):
-        """Recompensa ajustada por el riesgo tomado"""
-        if len(self.returns_buffer) < 5:
+        score = 1 / (1 + cv)
+        return -score if mean_return < 0 else score
+
+    def _calculate_risk_adjusted_reward(self, profit_dollars, returns):
+        std = np.std(returns)
+        if std == 0:
             return 0
-        
-        returns = np.array(list(self.returns_buffer))
-        volatility = np.std(returns)
-        
-        if volatility == 0:
-            return 0
-        
-        # Return to risk ratio        
-        risk_adjusted = profit_dollars / (volatility * self.initial_balance)
-        return np.tanh(risk_adjusted)  # Normalizar
-    
+        return np.tanh(profit_dollars / (std * self.initial_balance))
+
     def _calculate_momentum_reward(self, current_equity):
-        """Recompensa basada en momentum de equity"""
         if len(self.equity_buffer) < 3:
             return 0
-        
-        equity_series = np.array(list(self.equity_buffer))
-        
-        # Calcular momentum simple (diferencias)
-        if len(equity_series) >= 3:
-            recent_trend = np.mean(np.diff(equity_series[-3:]))
-            momentum_score = np.tanh(recent_trend / self.initial_balance)
-            return momentum_score
-        
-        return 0
-    
-    def _calculate_trade_quality_reward(self, profit_dollars):
-        """Evalúa la calidad del trade basado en contexto histórico"""
-        if len(self.returns_buffer) < 5:
+        eq = np.fromiter(self.equity_buffer, dtype=np.float32)
+        recent_trend = np.mean(np.diff(eq[-3:]))
+        return recent_trend * self.inv_initial_balance
+
+    def _calculate_trade_quality_reward(self, profit_dollars, returns):
+        recent = returns[-5:]
+        avg_recent = np.mean(recent)
+        if avg_recent == 0:
             return 0
-        
-        recent_returns = list(self.returns_buffer)[-5:]
-        avg_recent_return = np.mean(recent_returns)
-        
-        #avg_recent_return= -0.50
-        # Recompensa trades que superan el promedio reciente
-        if avg_recent_return != 0:
-            relative_performance = profit_dollars / (abs(avg_recent_return) * self.initial_balance)
-            return np.tanh(relative_performance)  # -1 para que sea relativo
-        
-        return 0
-    
+        relative = profit_dollars / (abs(avg_recent) * self.initial_balance)
+        return np.tanh(relative)
+
     def _update_buffers(self, profit_dollars, current_equity, drawdown_ratio):
-        """Actualiza los buffers de métricas"""
-        normalized_return = profit_dollars / self.initial_balance if self.initial_balance > 0 else 0
-        self.returns_buffer.append(normalized_return)
+        self.returns_buffer.append(profit_dollars * self.inv_initial_balance)
         self.equity_buffer.append(current_equity)
         self.drawdown_buffer.append(drawdown_ratio)
-    
+
     def get_adaptive_weights(self, episode):
-        """Ajusta pesos dinámicamente durante el entrenamiento"""
-        # Al final, priorizar profit y sharpe
         adaptive_weights = self.weights.copy()
-        
         if episode % 80 == 0:
-            adaptive_weights['drawdown'] += 0.5  # Más conservador
+            adaptive_weights['drawdown'] += 0.5
             adaptive_weights['consistency'] += 0.2
             adaptive_weights['profit'] += 0.5
-        elif episode % 150 == 0:  # Últimos 30% episodios
+        elif episode % 150 == 0:
             adaptive_weights['profit'] += 1.5
             adaptive_weights['sharpe'] += 1.3
-            adaptive_weights['drawdown'] += -1.1
-        
+            adaptive_weights['drawdown'] -= 1.1
         return adaptive_weights
-    
+
     def reset_episode(self):
-        """Reinicia buffers para nuevo episodio"""
         self.returns_buffer.clear()
         self.equity_buffer.clear()
         self.drawdown_buffer.clear()
-        
 
-# Función auxiliar para integrar en tu código existente
+
 def calculate_advanced_reward(reward_system, profit_dollars, current_equity, peak_equity,
-                            episode_returns, is_trade_closed=False, add_noise=True):
-    """
-    Función para integrar fácilmente en tu código existente
-    """
-    # Calcular recompensa avanzada
+                              episode_returns, is_trade_closed=False, add_noise=True):
     reward, components = reward_system.calculate_reward(
-        profit_dollars, current_equity, peak_equity, 
+        profit_dollars, current_equity, peak_equity,
         episode_returns, is_trade_closed
     )
-    
-    # Agregar ruido pequeño para exploración (opcional)
     if add_noise:
-        noise = np.random.normal(0, 0.01)
-        reward += noise
-    
+        reward += np.random.normal(0, 0.01)
     return reward, components
+
 

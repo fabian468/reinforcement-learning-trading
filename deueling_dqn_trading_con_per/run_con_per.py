@@ -4,7 +4,6 @@ Created on Wed Apr 30 00:25:00 2025
 @author: fabia
 """
 
-import math
 import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
@@ -12,6 +11,7 @@ import os
 import dropbox
 
 from notificador import enviar_alerta
+
 
 import cProfile
 import pstats
@@ -36,10 +36,6 @@ from indicadores import  add_ema200_distance
 DROPBOX_ACCESS_TOKEN = os.getenv("ACCESS_TOKEN_DROPBOX")
 
 dbx = dropbox.Dropbox(DROPBOX_ACCESS_TOKEN)
-
-
-def sigmoid(x):
-    return 1 / (1 + math.exp(-x))
 
 def price_format(n):
     n = float(n)
@@ -87,7 +83,7 @@ def dataset_loader_csv(csv_path):
             print("Error: El archivo CSV debe contener al menos la columna 'close'.")
             return None
 
-    except FileNotFoundError:
+    except FileNotFoundError: 
         print(f"Error: No se encontró el archivo en la ruta: {csv_path}")
         return None
     except Exception as e:
