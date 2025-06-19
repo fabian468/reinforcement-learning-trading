@@ -27,7 +27,7 @@ class AI_Trader_per():
                  commission_per_trade=0.07,
                  gamma=0.95,
                  epsilon=2.5,
-                 epsilon_final=0.1,
+                 epsilon_final=0.15,
                  epsilon_decay=0.9999,
                  use_double_dqn=True,
                  target_model_update=100,
