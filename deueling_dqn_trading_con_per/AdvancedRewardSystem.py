@@ -35,7 +35,7 @@ class AdvancedRewardSystem:
         self.sumaRecompensaTradeQuality = 0
 
         self.weights = {
-            'profit': 1.1,
+            'profit': 0.6,
             'sharpe': 0.5,
             'drawdown': 0.1,
             'consistency': 0.4,

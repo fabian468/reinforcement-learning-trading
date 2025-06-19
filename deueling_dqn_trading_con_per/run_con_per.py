@@ -144,7 +144,7 @@ def main():
     
     cada_cuantos_episodes_guardar_el_modelo = 5
   
-    episodes =2000
+    episodes =1000
     n_folds = 3
     batch_size = 256
     epsilon_decay = 0.99995
@@ -189,7 +189,7 @@ def main():
                        commission_per_trade= commission_per_trade,
                        gamma = gamma,
                        target_model_update = cada_cuanto_actualizar,
-                       memory_size=200000, # Asegúrate de tener esto
+                       memory_size=250000, # Asegúrate de tener esto
                        alpha=0.6,
                        beta_start=0.4,
                        beta_frames=100000,
@@ -533,8 +533,9 @@ def main():
                 
                 
                 
-                if len(trader.memory) > batch_size and t % 10 == 0:  # Solo cada 10 pasos
-                    current_loss = trader.batch_train(batch_size)
+                if len(trader.memory) > batch_size and t % 5 == 0:  # Solo cada 10 pasos
+                    for _ in range(3):  # Entrenar 2–3 veces en cada iteración
+                        current_loss = trader.batch_train(batch_size)
             
             # MOSTRAR PRINTS MENOS FRECUENTEMENTE
                 if mostrar_prints and t % 3000 == 0:  # Aumenté la frecuencia
@@ -562,6 +563,14 @@ def main():
     Drawdown={max_drawdown:.2%}
     Accuracy={accuracy:.2%}
     Equity={current_equity:.2f}
+    Recompensa del profi :{ reward_system.sumaRecompensaProfit} 
+    Recompensa del sharpe: {reward_system.sumaRecompensaSharpe}
+    Recompensa del drawndown: {reward_system.sumaRecompensaDrawndown}
+    Recompensa del la consistencia: {reward_system.sumaRecompensaConsistency}
+    Recompensa del riesgo ajustado: {reward_system.sumaRecompensaRiskAdjusted }
+    Recompensa del momenutum: { reward_system.sumaRecompensaMomentum} 
+    Recompensa de la calidad del trade: {reward_system.sumaRecompensaTradeQuality}
+    Recompensa Total del episodio: {reward_episode:.2f}
                 """)
             
             # Guardar estadísticas

@@ -12,6 +12,7 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import os
 import pickle
+from collections import deque
 
 from SumTree_class import SumTree
 from model_pytorch import DuelingDQN
@@ -26,7 +27,7 @@ class AI_Trader_per():
                  spread=0.20,
                  commission_per_trade=0.07,
                  gamma=0.95,
-                 epsilon=2.5,
+                 epsilon=3.5,
                  epsilon_final=0.15,
                  epsilon_decay=0.9999,
                  use_double_dqn=True,
@@ -70,6 +71,7 @@ class AI_Trader_per():
         self.epsilon = epsilon
         self.epsilon_final = epsilon_final
         self.epsilon_decay = epsilon_decay
+        self.rewards_epsilon_buffer = deque(maxlen=30)
 
         self.use_double_dqn = use_double_dqn
         self.target_model_update = target_model_update
@@ -181,6 +183,34 @@ class AI_Trader_per():
         priority = self._get_priority(error)
         self.memory.add(priority, (state, action, reward, next_state, done))
         
+    def adaptative_epsilon_from_history(self, reward, step=0.01, min_epsilon=0.01, max_epsilon=1.0, window=10):
+        """
+        Ajusta epsilon dinámicamente en función del promedio móvil de recompensas.
+        """
+     
+        # Guardar la nueva recompensa
+        self.rewards_epsilon_buffer.append(reward)
+        
+        print(self.epsilon)
+
+        # Verificar si hay suficiente historial
+        if len(self.rewards_epsilon_buffer) < 2 * window:
+            return self.epsilon
+        
+        
+        # Obtener las dos ventanas de recompensa
+        rewards = list(self.rewards_epsilon_buffer)
+        prev_avg = np.mean(rewards[-2*window:-window])
+        curr_avg = np.mean(rewards[-window:])
+
+        # Ajustar epsilon según tendencia
+        if curr_avg > prev_avg:
+            self.epsilon = max(self.epsilon - step, min_epsilon)
+        elif curr_avg < prev_avg:
+            self.epsilon = min(self.epsilon + step, max_epsilon)
+        
+
+        
     def batch_train(self, batch_size):
         # Inicialización para la extracción del batch
         tree_idx = np.empty((batch_size,), dtype=np.int32)
@@ -280,7 +310,11 @@ class AI_Trader_per():
         # Incrementar el contador de pasos
         self.step_counter += 1
         
-        # Decaimiento de epsilon para la exploración
+        #avg_reward = rewards.mean().item()
+
+    # Ajustar epsilon según la historia de recompensas
+        #self.adaptative_epsilon_from_history(reward = avg_reward)
+        
         if self.epsilon > self.epsilon_final:
             self.epsilon *= self.epsilon_decay
             
