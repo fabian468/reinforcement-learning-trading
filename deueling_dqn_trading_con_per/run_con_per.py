@@ -571,6 +571,8 @@ def main():
     Recompensa del momenutum: { reward_system.sumaRecompensaMomentum} 
     Recompensa de la calidad del trade: {reward_system.sumaRecompensaTradeQuality}
     Recompensa Total del episodio: {reward_episode:.2f}
+    
+    Recompensa total: {trader.total_rewards:.2f}
                 """)
             
             # Guardar estadísticas
