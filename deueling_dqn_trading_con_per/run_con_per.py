@@ -416,7 +416,7 @@ def main():
                     
                 elif action == 3 and len(trader.inventory_sell) <= 0:  # Venta en corto
                     trader.inventory_sell.append(sell_price)
-                    reward += 0.01 if t < len(alcista_values) and alcista_values[t] < 0 else -0.01
+                    #reward += 0.01 if t < len(alcista_values) and alcista_values[t] < 0 else -0.01
                     if episode == episodes and fold == n_folds - 1:
                         sell_points.append((timestamp, sell_price))
                         
