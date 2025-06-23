@@ -143,3 +143,30 @@ def state_creator_vectorized(data, timestep, window_size):
 #hora
 #diferencia de ema200 con el close actual
 #
+
+
+def state_creator_ohcl_vectorized(data, timestep, window_size, scaler):
+    starting_id = timestep - window_size + 1
+
+    if starting_id < 0:
+        padding = pd.DataFrame([data.iloc[0]] * -starting_id, columns=data.columns, index=data.index[: -starting_id])
+        windowed_data = pd.concat([padding, data.iloc[0:timestep+1]])
+    else:
+        windowed_data = data.iloc[starting_id:timestep+1]
+
+    features = windowed_data[['open', 'high', 'low', 'close', 'tick_volume']].values
+    features_scaled = scaler.transform(features)
+
+    state = features_scaled.flatten().tolist()
+
+    # Hora codificada
+    time_obj = pd.to_datetime(data.iloc[timestep]['time'])
+    hour = time_obj.hour
+    hour_sin = np.sin(2 * np.pi * hour / 24)
+    hour_cos = np.cos(2 * np.pi * hour / 24)
+    state.extend([hour_sin, hour_cos])
+
+    return np.array(state).reshape(1, -1)
+
+
+

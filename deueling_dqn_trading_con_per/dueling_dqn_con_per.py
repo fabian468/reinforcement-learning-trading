@@ -34,10 +34,10 @@ class AI_Trader_per():
                  target_model_update=100,
                  learning_rate=0.001,
                  memory_size=500000, # Tamaño de la memoria
-                 alpha=0.6,        # Hiperparámetro para la priorización
+                 alpha=0.5,        # Hiperparámetro para la priorización
                  beta_start=0.4,   # Hiperparámetro para la corrección de importancia
                  beta_frames=100000, # Número de frames para alcanzar beta=1
-                 epsilon_priority=1e-6, # Pequeña constante para evitar probabilidad cero
+                 epsilon_priority=1e-5, # Pequeña constante para evitar probabilidad cero
                  # Nuevos parámetros para el scheduler
                  scheduler_type='cosine_decay',  # 'exponential_decay', 'cosine_decay', 'polynomial_decay', 'reduce_on_plateau'
                  lr_decay_rate=0.97,        # Factor de decaimiento para exponential
@@ -315,8 +315,8 @@ class AI_Trader_per():
     # Ajustar epsilon según la historia de recompensas
         #self.adaptative_epsilon_from_history(reward = avg_reward)
         
-        if self.epsilon > self.epsilon_final:
-            self.epsilon *= self.epsilon_decay
+        # if self.epsilon > self.epsilon_final:
+            # self.epsilon *= self.epsilon_decay
             
         return current_loss
     
@@ -339,9 +339,9 @@ class AI_Trader_per():
                 self.scheduler.step()
             
     def trade(self, state):
-        if random.random() <= self.epsilon:
-            return random.randrange(self.action_space)
-    
+        if hasattr(self.model, "reset_noise"):
+            self.model.reset_noise()
+        
         if isinstance(state, np.ndarray):
             state = torch.FloatTensor(state).to(self.device)
         if state.dim() == 1:

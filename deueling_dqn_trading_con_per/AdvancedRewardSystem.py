@@ -36,8 +36,8 @@ class AdvancedRewardSystem:
 
         self.weights = {
             'profit': 0.6,
-            'sharpe': 0.5,
-            'drawdown': 0.1,
+            'sharpe': 0.3,
+            'drawdown': 0.5,
             'consistency': 0.4,
             'risk_adjusted': 0.4,
             'momentum': 0.5,

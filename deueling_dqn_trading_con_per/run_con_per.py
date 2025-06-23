@@ -12,6 +12,7 @@ import dropbox
 
 from notificador import enviar_alerta
 
+from sklearn.preprocessing import StandardScaler
 
 from numba import jit
 import warnings
@@ -30,7 +31,7 @@ else:
     print("GPU no disponible, ejecutando en CPU")
 
 from dueling_dqn_con_per import AI_Trader_per 
-from state_creator import  state_creator_vectorized 
+from state_creator import  state_creator_vectorized , state_creator_ohcl_vectorized
 from AdvancedRewardSystem import AdvancedRewardSystem , calculate_advanced_reward
 from request_datos_backend import upload_training_data
 from plot_stadist import plot_trading_session
@@ -76,7 +77,7 @@ def dataset_loader_csv(csv_path):
 
         # Selecciona columnas disponibles
         if 'time' in df.columns and 'close' in df.columns and 'spread' in df.columns and 'tick_volume' in df.columns:
-            return df[['time', 'close', 'tick_volume' , 'spread' , 'low' , 'ema_diference_close' , 'high']]
+            return df[[ 'open','time', 'close', 'tick_volume' , 'spread' , 'low' , 'ema_diference_close' , 'high']]
         elif 'close' in df.columns and 'tick_volume' in df.columns:
             return df[['close', 'tick_volume']]
         elif 'close' in df.columns:
@@ -120,10 +121,10 @@ def calculate_short_profit_fast(sell_price, buy_price, pip_value, commission, lo
 #comienzo del codigo
 def main():
     
-    nombre_csv = "XAUUSD_H1_2015_01_01_2024_05_31.csv"
+    nombre_csv = "XAUUSD_M15_2025_03_01_2025_03_31.csv"
     
     cargar_modelo = False
-    modelo_existente = "resultados_cv/model_XAUUSD_H1_2015_01_01_2024_05_31.csv"
+    modelo_existente = "resultados_cv/model_XAUUSD_M15_2025_03_01_2025_03_31.csv"
     
     cargar_memoria_buffer = True
     
@@ -144,13 +145,13 @@ def main():
     
     cada_cuantos_episodes_guardar_el_modelo = 5
   
-    episodes =1000
+    episodes =3000
     n_folds = 3
     batch_size = 256
     epsilon_decay = 0.99995
     gamma = 0.98
     cada_cuanto_actualizar = 200
-    learning_rate = 0.001
+    learning_rate = 0.01
     window_size = 18
     ventana_para_los_estados_de_datos = 4
 
@@ -181,7 +182,10 @@ def main():
         alcista = data['ema_diference_close']
     
     
-    state_size = (window_size - 1) * 4 + window_size + window_size + 4
+    state_size = window_size * 5 + 2  # OHLC + volumen + hora
+    
+    state_size_rsi_macd = (window_size - 1) * 4 + window_size + window_size + 4
+
 
     # Carga el modelo y ve si cargar uno o crear uno nuevo
     trader = AI_Trader_per(state_size,
@@ -221,6 +225,9 @@ def main():
         
         absolute_start = max(start, ventana_para_los_estados_de_datos)  # Garantiza que mínimo empiece desde fila 10
         fold_data = train_data.iloc[absolute_start:end].copy()
+        
+        scaler = StandardScaler()
+        scaler.fit(fold_data[['open', 'high', 'low', 'close', 'tick_volume']].values)
 
         data_samples = len(fold_data) - 1 
         
@@ -251,7 +258,7 @@ def main():
 
 
         print("Generando estados...")
-        states = [state_creator_vectorized(fold_data, t, window_size) for t in range(data_samples)]
+        states = [state_creator_ohcl_vectorized(fold_data, t, window_size , scaler) for t in range(data_samples)]
         print(f"Estados generados: {len(states)}")
         
         # Crea las estadísticas para guardar
@@ -536,6 +543,12 @@ def main():
                 if len(trader.memory) > batch_size and t % 5 == 0:  # Solo cada 10 pasos
                     for _ in range(3):  # Entrenar 2–3 veces en cada iteración
                         current_loss = trader.batch_train(batch_size)
+                        
+                    if hasattr(trader.model, "reset_noise"):
+                        trader.model.reset_noise()
+
+                    if trader.epsilon > trader.epsilon_final:
+                        trader.epsilon *= trader.epsilon_decay
             
             # MOSTRAR PRINTS MENOS FRECUENTEMENTE
                 if mostrar_prints and t % 3000 == 0:  # Aumenté la frecuencia
