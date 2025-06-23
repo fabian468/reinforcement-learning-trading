@@ -190,9 +190,7 @@ class AI_Trader_per():
      
         # Guardar la nueva recompensa
         self.rewards_epsilon_buffer.append(reward)
-        
-        print(self.epsilon)
-
+    
         # Verificar si hay suficiente historial
         if len(self.rewards_epsilon_buffer) < 2 * window:
             return self.epsilon

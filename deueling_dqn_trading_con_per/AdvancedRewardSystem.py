@@ -35,12 +35,12 @@ class AdvancedRewardSystem:
         self.sumaRecompensaTradeQuality = 0
 
         self.weights = {
-            'profit': 0.6,
+            'profit': 1.0,
             'sharpe': 0.3,
-            'drawdown': 0.5,
+            'drawdown': 0.2,
             'consistency': 0.4,
             'risk_adjusted': 0.4,
-            'momentum': 0.5,
+            'momentum': 0.3,
             'trade_quality': 0.2
         }
 
@@ -154,6 +154,7 @@ class AdvancedRewardSystem:
 
 def calculate_advanced_reward(reward_system, profit_dollars, current_equity, peak_equity,
                               episode_returns, is_trade_closed=False, add_noise=True):
+    
     reward, components = reward_system.calculate_reward(
         profit_dollars, current_equity, peak_equity,
         episode_returns, is_trade_closed

@@ -121,7 +121,7 @@ def calculate_short_profit_fast(sell_price, buy_price, pip_value, commission, lo
 #comienzo del codigo
 def main():
     
-    nombre_csv = "XAUUSD_M15_2025_03_01_2025_03_31.csv"
+    nombre_csv = "XAUUSD_H1_2015_01_01_2024_05_31.csv"
     
     cargar_modelo = False
     modelo_existente = "resultados_cv/model_XAUUSD_M15_2025_03_01_2025_03_31.csv"
@@ -145,7 +145,7 @@ def main():
     
     cada_cuantos_episodes_guardar_el_modelo = 5
   
-    episodes =3000
+    episodes =4000
     n_folds = 3
     batch_size = 256
     epsilon_decay = 0.99995
@@ -358,12 +358,12 @@ def main():
                 # Si la accion de la ia es igua a 1 compra
                 if action == 1 and not trader.inventory:  # Comprar
                     trader.inventory.append(buy_price)
-                    reward += 0.01 if t < len(alcista_values) and alcista_values[t] > 0 else -0.01
+                    #reward += 0.01 if t < len(alcista_values) and alcista_values[t] > 0 else -0.01
                     if episode == episodes and fold == n_folds - 1:
                         buy_points.append((timestamp, buy_price))
                         
-                elif action == 0 and len(trader.inventory) <= 0 and t < len(alcista_values) and alcista_values[t] > 0:
-                                reward += -0.01
+                #elif action == 0 and len(trader.inventory) <= 0 and t < len(alcista_values) and alcista_values[t] > 0:
+                                #reward += -0.01
                         
                 # Si la accion de la ia es igual a 2 y hay un trade abierto vende esa accion
                 elif action == 2 and len(trader.inventory) > 0:  # Vender
