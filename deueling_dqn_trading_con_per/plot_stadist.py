@@ -8,7 +8,7 @@ Created on Thu Jun 12 10:44:01 2025
 import matplotlib.pyplot as plt
 import os
 
-def plot_trading_session(data, buy_points, sell_points, symbol, timeframe, save_path='resultados_cv'):
+def plot_trading_session(data, buy_points, sell_points, symbol, timeframe, fold,save_path='resultados_cv'):
     fig, ax = plt.subplots(figsize=(14, 7))
 
     # Línea de precio
@@ -36,5 +36,5 @@ def plot_trading_session(data, buy_points, sell_points, symbol, timeframe, save_
 
     # Mostrar y guardar
     plt.tight_layout()
-    plt.savefig(os.path.join(save_path, f'trading_session_{symbol}_{timeframe}.png'))
+    plt.savefig(os.path.join(save_path, f'trading_session_{symbol}_{timeframe}_{fold}.png'))
     plt.show()

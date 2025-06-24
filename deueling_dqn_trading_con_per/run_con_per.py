@@ -145,8 +145,8 @@ def main():
     
     cada_cuantos_episodes_guardar_el_modelo = 5
   
-    episodes =4000
-    n_folds = 3
+    episodes =2000
+    n_folds = 7
     batch_size = 256
     epsilon_decay = 0.99995
     gamma = 0.98
@@ -602,7 +602,7 @@ def main():
             
             # GUARDAR MODELO MENOS FRECUENTEMENTE
             if episode % cada_cuantos_episodes_guardar_el_modelo == 0:  # Menos frecuente
-                trader.plot_training_metrics(save_path=resultados_dir)
+                trader.plot_training_metrics(fold + 1 , save_path=resultados_dir)
                 trader.save_model(os.path.join(resultados_dir, nombre_modelo_guardado))
                 
                 if guardar_estadisticas_en_backend:
@@ -634,7 +634,7 @@ def main():
 
     # Plotting final
     if buy_points or sell_points:
-        plot_trading_session(fold_data, buy_points, sell_points, symbol, intervalo, save_path=resultados_dir)
+        plot_trading_session(fold_data, buy_points, sell_points, symbol, intervalo, fold, save_path=resultados_dir)
 
     fold_metrics = {
         'fold': fold + 1,

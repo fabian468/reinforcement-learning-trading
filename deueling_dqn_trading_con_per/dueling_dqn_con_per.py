@@ -475,7 +475,7 @@ class AI_Trader_per():
             print(f"Error al cargar modelo: {e}")
             print("Manteniendo valores por defecto.")
 
-    def plot_training_metrics(self, save_path='resultados_cv'):
+    def plot_training_metrics(self, fold ,  save_path='resultados_cv'):
         min_length = min(len(self.profit_history), len(self.rewards_history), 
                         len(self.epsilon_history), len(self.trades_history), 
                         len(self.loss_history), len(self.drawdown_history), 
@@ -555,7 +555,7 @@ class AI_Trader_per():
         axs[4, 1].legend()
 
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-        plt.savefig(os.path.join(save_path, 'training_metrics.png'), dpi=300, bbox_inches='tight')
+        plt.savefig(os.path.join(save_path, f'training_metrics_fold_{fold}.png'), dpi=300, bbox_inches='tight')
         plt.show()
         
     def print_scheduler_info(self):
