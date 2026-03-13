@@ -38,10 +38,10 @@ class AdvancedRewardSystem:
             'profit': 1.0,
             'sharpe': 0.3,
             'drawdown': 0.2,
-            'consistency': 0.4,
-            'risk_adjusted': 0.4,
-            'momentum': 0.3,
-            'trade_quality': 0.2
+            'consistency': 0,
+            'risk_adjusted': 0,
+            'momentum': 0,
+            'trade_quality': 0
         }
 
         self.sum_map = {
@@ -57,7 +57,7 @@ class AdvancedRewardSystem:
     def calculate_reward(self, profit_dollars, current_equity, peak_equity, trade_returns_history, is_trade_closed=False):
         reward_components = {}
 
-        reward_components['profit'] = profit_dollars
+        reward_components['profit'] =  np.tanh(profit_dollars)
 
         returns_np = np.fromiter(self.returns_buffer, dtype=np.float32) if len(self.returns_buffer) > 0 else None
 
@@ -136,11 +136,11 @@ class AdvancedRewardSystem:
 
     def get_adaptive_weights(self, episode):
         adaptive_weights = self.weights.copy()
-        if episode % 80 == 0:
+        if episode % 250 == 0:
             adaptive_weights['drawdown'] += 0.5
             adaptive_weights['consistency'] += 0.2
             adaptive_weights['profit'] += 0.5
-        elif episode % 150 == 0:
+        elif episode % 400 == 0:
             adaptive_weights['profit'] += 1.5
             adaptive_weights['sharpe'] += 1.3
             adaptive_weights['drawdown'] -= 1.1

@@ -27,7 +27,7 @@ class AI_Trader_per():
                  spread=0.20,
                  commission_per_trade=0.07,
                  gamma=0.95,
-                 epsilon=3.5,
+                 epsilon=1,
                  epsilon_final=0.15,
                  epsilon_decay=0.9999,
                  use_double_dqn=True,
@@ -51,6 +51,10 @@ class AI_Trader_per():
         # Configurar dispositivo
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Using device: {self.device}")
+
+        # Mixed precision: usa float16 en GPU para forward/backward más rápidos
+        self.use_amp = self.device.type == "cuda"
+        self.scaler_amp = torch.amp.GradScaler("cuda") if self.use_amp else None
         
         
         self.state_size = state_size
@@ -94,6 +98,7 @@ class AI_Trader_per():
         self.model = DuelingDQN(state_size, action_space).to(self.device)
         self.optimizer = self._create_optimizer()
         self.scheduler = self._create_scheduler()
+        self.has_noise = hasattr(self.model, "reset_noise")  # Cacheado una vez
 
         if self.use_double_dqn:
             self.target_model = DuelingDQN(state_size, action_space).to(self.device)
@@ -149,38 +154,9 @@ class AI_Trader_per():
         return (np.abs(error) + self.epsilon_priority) ** self.alpha
 
     def remember(self, state, action, reward, next_state, done):
-        # Convertir a tensor si es necesario
-        if isinstance(state, np.ndarray):
-            state_tensor = torch.FloatTensor(state).to(self.device)
-        else:
-            state_tensor = state
-            
-        if state_tensor.dim() == 1:
-            state_tensor = state_tensor.unsqueeze(0)
-            
-        with torch.no_grad():
-            q_value = self.model(state_tensor)[0][action].cpu().numpy()
-            
-        if done:
-            target_q = reward
-        else:
-            if isinstance(next_state, np.ndarray):
-                next_state_tensor = torch.FloatTensor(next_state).to(self.device)
-            else:
-                next_state_tensor = next_state
-                
-            if next_state_tensor.dim() == 1:
-                next_state_tensor = next_state_tensor.unsqueeze(0)
-    
-            with torch.no_grad():
-                if self.use_double_dqn:
-                    next_action = torch.argmax(self.model(next_state_tensor)[0]).cpu().numpy()
-                    target_q = reward + self.gamma * self.target_model(next_state_tensor)[0][next_action].cpu().numpy()
-                else:
-                    target_q = reward + self.gamma * torch.max(self.model(next_state_tensor)[0]).cpu().numpy()
-                
-        error = np.abs(target_q - q_value)
-        priority = self._get_priority(error)
+        # Usar prioridad máxima actual para nuevas experiencias (estándar en PER).
+        # Evita los 2 forward passes por paso; las prioridades se corrigen en batch_train.
+        priority = self.memory.max_priority
         self.memory.add(priority, (state, action, reward, next_state, done))
         
     def adaptative_epsilon_from_history(self, reward, step=0.01, min_epsilon=0.01, max_epsilon=1.0, window=10):
@@ -245,51 +221,55 @@ class AI_Trader_per():
         if next_states.dim() > 2:
             next_states = next_states.squeeze(1)
     
-        # Predicciones de los modelos
-        current_q_values = self.model(states)
-        next_q_values = self.model(next_states)
-        target_next_q_values = self.target_model(next_states) if self.use_double_dqn else next_q_values
-    
-        # Cálculo de los valores objetivo (TD target)
-        with torch.no_grad():
-            if self.use_double_dqn:
-                # El modelo principal elige la acción óptima en el siguiente estado
-                best_actions = torch.argmax(next_q_values, dim=1)
-                # El target model evalúa el Q-valor de esa acción
-                target_next_q_values_selected = target_next_q_values.gather(1, best_actions.unsqueeze(1)).squeeze()
-            else:
-                # DQN estándar: el target model elige y evalúa la mejor acción
-                target_next_q_values_selected = torch.max(target_next_q_values, dim=1)[0]
-    
-            # Calcular los Q-valores objetivo
-            q_targets = rewards + self.gamma * target_next_q_values_selected * (~dones)
-    
-        # Q-valores actuales para las acciones tomadas
-        current_q_values_for_actions = current_q_values.gather(1, actions.unsqueeze(1)).squeeze()
-    
-        # Calcular el error TD
-        errors = torch.abs(q_targets - current_q_values_for_actions).detach().cpu().numpy()
-    
-        # Actualizar las prioridades en la memoria
-        for i in range(batch_size):
-            self.memory.update(tree_idx[i], self._get_priority(errors[i]))
-    
-        # Calcular los pesos de importancia (IS weights)
+        # Pesos de importancia (IS weights) — calculados antes del forward pass
         sampling_probabilities = priorities / self.memory.total_priority
         weights = np.power(self.memory_size * sampling_probabilities, -self.beta)
-        weights /= weights.max() # Normalizar pesos
+        weights /= weights.max()
         weights = torch.FloatTensor(weights).to(self.device)
-    
-        # Calcular la pérdida con pesos de importancia
-        loss = F.mse_loss(current_q_values_for_actions, q_targets, reduction='none')
-        weighted_loss = (loss * weights).mean()
-    
-        # Actualizar el modelo
+
+        autocast_ctx = torch.amp.autocast("cuda") if self.use_amp else torch.amp.autocast("cpu", enabled=False)
+
+        with autocast_ctx:
+            # Predicciones de los modelos
+            current_q_values = self.model(states)
+            with torch.no_grad():
+                next_q_values = self.model(next_states)
+                target_next_q_values = self.target_model(next_states) if self.use_double_dqn else next_q_values
+
+                if self.use_double_dqn:
+                    best_actions = torch.argmax(next_q_values, dim=1)
+                    target_next_q_values_selected = target_next_q_values.gather(1, best_actions.unsqueeze(1)).squeeze()
+                else:
+                    target_next_q_values_selected = torch.max(target_next_q_values, dim=1)[0]
+
+                q_targets = rewards + self.gamma * target_next_q_values_selected * (~dones)
+
+            current_q_values_for_actions = current_q_values.gather(1, actions.unsqueeze(1)).squeeze()
+
+            # Calcular el error TD
+            errors = torch.abs(q_targets - current_q_values_for_actions).detach().cpu().numpy()
+
+            # Pérdida ponderada
+            loss = F.mse_loss(current_q_values_for_actions, q_targets, reduction='none')
+            weighted_loss = (loss * weights).mean()
+
+        # Actualizar prioridades en memoria (vectorizado)
+        new_priorities = self._get_priority(errors)
+        for i in range(batch_size):
+            self.memory.update(tree_idx[i], new_priorities[i])
+
+        # Backward pass con scaler AMP si disponible
         self.optimizer.zero_grad()
-        weighted_loss.backward()
-        # Gradient clipping para estabilidad
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-        self.optimizer.step()
+        if self.use_amp:
+            self.scaler_amp.scale(weighted_loss).backward()
+            self.scaler_amp.unscale_(self.optimizer)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            self.scaler_amp.step(self.optimizer)
+            self.scaler_amp.update()
+        else:
+            weighted_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            self.optimizer.step()
         
         current_loss = weighted_loss.item()
         self.loss_history.append(current_loss)
@@ -313,8 +293,8 @@ class AI_Trader_per():
     # Ajustar epsilon según la historia de recompensas
         #self.adaptative_epsilon_from_history(reward = avg_reward)
         
-        # if self.epsilon > self.epsilon_final:
-            # self.epsilon *= self.epsilon_decay
+        #if self.epsilon > self.epsilon_final:
+             #self.epsilon *= self.epsilon_decay
             
         return current_loss
     
@@ -337,7 +317,10 @@ class AI_Trader_per():
                 self.scheduler.step()
             
     def trade(self, state):
-        if hasattr(self.model, "reset_noise"):
+        if np.random.random() <= self.epsilon:
+            return random.randrange(self.action_space)
+
+        if self.has_noise:
             self.model.reset_noise()
         
         if isinstance(state, np.ndarray):

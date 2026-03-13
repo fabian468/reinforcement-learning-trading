@@ -21,7 +21,7 @@ warnings.filterwarnings('ignore')
 import cProfile
 import pstats
 
-load_dotenv() 
+load_dotenv()
 
 import torch
 
@@ -30,8 +30,19 @@ if torch.cuda.is_available():
 else:
     print("GPU no disponible, ejecutando en CPU")
 
-from dueling_dqn_con_per import AI_Trader_per 
-from state_creator import  state_creator_vectorized , state_creator_ohcl_vectorized
+# Importar parámetros centralizados
+from parametros import (
+    ConfigEntorno, ConfigTrading, ConfigAgente,
+    ConfigMemoria, ConfigScheduler, ConfigReward,
+    ConfigEntrenamiento, ConfigModelo, ConfigBackend,
+    get_state_size, get_config_trader, imprimir_config
+)
+
+from dueling_dqn_con_per import AI_Trader_per
+from state_creator import (
+    state_creator_vectorized, state_creator_ohcl_vectorized,
+    create_all_states_ohcl, create_all_states_advanced
+)
 from AdvancedRewardSystem import AdvancedRewardSystem , calculate_advanced_reward
 from request_datos_backend import upload_training_data
 from plot_stadist import plot_trading_session
@@ -45,6 +56,37 @@ dbx = dropbox.Dropbox(DROPBOX_ACCESS_TOKEN)
 def price_format(n):
     n = float(n)
     return "- {0:.3f}".format(abs(n)) if n < 0 else "{0:.3f}".format(abs(n))
+
+
+def get_full_state(base_market_state, inventory, inventory_sell, current_price, pip_value, initial_balance):
+    """
+    Concatena características de posición al estado de mercado.
+    El agente necesita saber si tiene posición abierta y cuánto gana/pierde.
+
+    Args:
+        base_market_state : np.ndarray 1D (state del mercado)
+        inventory         : lista de precios de entrada long
+        inventory_sell    : lista de precios de entrada short
+        current_price     : precio actual
+        pip_value         : valor por pip en $ (pip_value_eur_usd)
+        initial_balance   : balance inicial
+
+    Returns:
+        np.ndarray 1D (market_state + [has_long, has_short, upnl_norm])
+    """
+    has_long  = 1.0 if inventory else 0.0
+    has_short = 1.0 if inventory_sell else 0.0
+
+    if inventory:
+        raw_upnl = (current_price - inventory[0]) * pip_value
+    elif inventory_sell:
+        raw_upnl = (inventory_sell[0] - current_price) * pip_value
+    else:
+        raw_upnl = 0.0
+
+    upnl_norm = float(np.tanh(raw_upnl / (initial_balance * 0.02)))  # escala: 2% del balance
+
+    return np.concatenate([base_market_state, [has_long, has_short, upnl_norm]]).astype(np.float32)
 
 
 
@@ -120,50 +162,59 @@ def calculate_short_profit_fast(sell_price, buy_price, pip_value, commission, lo
 
 #comienzo del codigo
 def main():
-    
-    nombre_csv = "XAUUSD_H1_2015_01_01_2024_05_31.csv"
-    
-    cargar_modelo = False
-    modelo_existente = "resultados_cv/model_XAUUSD_M15_2025_03_01_2025_03_31.csv"
-    
-    cargar_memoria_buffer = True
-    
-    guardar_estadisticas_en_backend = True   
-    guardar_en_dropbox = False
-    mostrar_prints = False
-    
-    symbol = "GOLD"
-    intervalo = "daily"
-    
-    nombre_modelo_guardado = "model_" + nombre_csv
-    
-    es_indice = False
-    es_forex = False
-    es_metal = True
-    tick_value = 5  
-    pip_multiplier = 10000  
-    
-    cada_cuantos_episodes_guardar_el_modelo = 5
-  
-    episodes =2000
-    n_folds = 7
-    batch_size = 256
-    epsilon_decay = 0.99995
-    gamma = 0.98
-    cada_cuanto_actualizar = 200
-    learning_rate = 0.01
-    window_size = 18
-    ventana_para_los_estados_de_datos = 4
 
-    balance_first = 100 # dinero inicial
-    lot_size = 0.01    
-    commission_per_trade = 4.5
-    test_size_ratio = 0.2  # 20% para prueba
-    
+    # Imprimir configuración actual (opcional)
+    # imprimir_config()
+
+    # === Usar parámetros centralizados ===
+    nombre_csv = ConfigEntorno.NOMBRE_CSV
+
+    cargar_modelo = ConfigModelo.CARGAR_MODELO
+    modelo_existente = ConfigModelo.MODELO_EXISTENTE
+    cargar_memoria_buffer = ConfigModelo.CARGAR_MEMORIA_BUFFER
+
+    guardar_estadisticas_en_backend = ConfigBackend.GUARDAR_ESTADISTICAS_EN_BACKEND
+    guardar_en_dropbox = ConfigBackend.GUARDAR_EN_DROPBOX
+    mostrar_prints = ConfigBackend.MOSTRAR_PRINTS
+
+    symbol = ConfigEntorno.SYMBOL
+    intervalo = ConfigEntorno.INTERVALO
+
+    nombre_modelo_guardado = ConfigModelo.NOMBRE_MODELO
+
+    # Parámetros del mercado
+    es_indice = ConfigEntorno.ES_INDICE
+    es_forex = ConfigEntorno.ES_FOREX
+    es_metal = ConfigEntorno.ES_METAL
+    tick_value = ConfigEntorno.TICK_VALUE
+    pip_multiplier = ConfigEntorno.PIP_MULTIPLIER
+
+    # Entrenamiento
+    cada_cuantos_episodes_guardar_el_modelo = ConfigEntrenamiento.GUARDAR_MODELO_CADA
+    episodes = ConfigEntrenamiento.EPISODES
+    n_folds = ConfigEntrenamiento.N_FOLDS
+    batch_size = ConfigEntrenamiento.BATCH_SIZE
+
+    # Agente
+    epsilon_decay = ConfigAgente.EPSILON_DECAY
+    gamma = ConfigAgente.GAMMA
+    cada_cuanto_actualizar = ConfigAgente.TARGET_MODEL_UPDATE
+    learning_rate = ConfigAgente.LEARNING_RATE
+
+    # Entorno
+    window_size = ConfigEntorno.WINDOW_SIZE
+    ventana_para_los_estados_de_datos = ConfigEntorno.VENTANA_DATOS
+
+    # Trading
+    balance_first = ConfigTrading.BALANCE_INICIAL
+    lot_size = ConfigTrading.LOT_SIZE
+    commission_per_trade = ConfigTrading.COMMISSION_PER_TRADE
+    test_size_ratio = ConfigEntorno.TEST_SIZE_RATIO
+
     pip_value_eur_usd = 10 * lot_size
-    
+
     # Creación de carpeta para guardar los resultados
-    resultados_dir = 'resultados_cv'
+    resultados_dir = ConfigModelo.DIRECTORIO_RESULTADOS
     os.makedirs(resultados_dir, exist_ok=True)
     
     reward_system = AdvancedRewardSystem(initial_balance=balance_first)
@@ -182,28 +233,20 @@ def main():
         alcista = data['ema_diference_close']
     
     
-    state_size = window_size * 5 + 2  # OHLC + volumen + hora
-    
-    state_size_rsi_macd = (window_size - 1) * 4 + window_size + window_size + 4
+    # Usar función centralizada para calcular state_size
+    state_size = get_state_size()
 
+    # state_size_rsi_macd ya no se usa, mantener por compatibilidad
+    # state_size_rsi_macd = (window_size - 1) * 4 + window_size + window_size + 4
+
+    # Obtener parámetros del trader desde parametros.py
+    trader_params = get_config_trader()
 
     # Carga el modelo y ve si cargar uno o crear uno nuevo
-    trader = AI_Trader_per(state_size,
-                       epsilon_decay= epsilon_decay,
-                       commission_per_trade= commission_per_trade,
-                       gamma = gamma,
-                       target_model_update = cada_cuanto_actualizar,
-                       memory_size=250000, # Asegúrate de tener esto
-                       alpha=0.6,
-                       beta_start=0.4,
-                       beta_frames=100000,
-                       epsilon_priority=1e-3,
-                       scheduler_type='cosine_decay',
-                       learning_rate=learning_rate,
-                       lr_decay_rate=0.97,      # LR se multiplica por 0.96 cada lr_decay_steps
-                       lr_decay_steps=1000,     # Cada 1000 pasos de entrenamiento
-                       lr_min=1e-5
-                       )
+    trader = AI_Trader_per(
+        state_size,
+        **trader_params
+    )
 
     if cargar_modelo:
         try:
@@ -222,6 +265,8 @@ def main():
         print(f"\n{'='*30} Fold {fold + 1}/{n_folds} {'='*30}")
         start = fold  * fold_size
         end = (fold + 1) * fold_size
+        
+        
         
         absolute_start = max(start, ventana_para_los_estados_de_datos)  # Garantiza que mínimo empiece desde fila 10
         fold_data = train_data.iloc[absolute_start:end].copy()
@@ -253,13 +298,18 @@ def main():
         if 'hora' in locals() and 'time' in data.columns:
             hora_values = hora.values
             has_time = True
+            # Pre-parsear las horas como enteros para evitar string.split en el hot loop
+            hora_int_pre = np.array([int(h.split(":")[0]) for h in fold_data['time'].values])
         else:
             has_time = False
+            hora_int_pre = None
 
 
         print("Generando estados...")
-        states = [state_creator_ohcl_vectorized(fold_data, t, window_size , scaler) for t in range(data_samples)]
-        print(f"Estados generados: {len(states)}")
+        # Vectorizado: scaler.transform una vez + sliding_window_view (~100x más rápido)
+        # Genera data_samples+1 estados para incluir el next_state del último paso
+        all_states = create_all_states_ohcl(fold_data, window_size, scaler, hora_int_pre)
+        print(f"Estados generados: {len(all_states)}")
         
         # Crea las estadísticas para guardar
         trader.profit_history = []
@@ -274,6 +324,7 @@ def main():
         trader.step_counter = 0
 
         trader.memory.clear()
+        trader.epsilon = 0.5
         
         reward_system = AdvancedRewardSystem(initial_balance=balance_first)
 
@@ -283,7 +334,9 @@ def main():
             
             #reward_system.weights = reward_system.get_adaptive_weights(episode)
             # Crea las estadísticas del episodio
-            state = states[0]
+            # Estado inicial: inventario vacío → position features = [0, 0, 0]
+            state = get_full_state(all_states[0], trader.inventory, trader.inventory_sell,
+                                   close_prices[0], pip_value_eur_usd, balance_first)
             total_profit_pips = 0
             trades_count = 0
             wins = 0
@@ -306,6 +359,9 @@ def main():
             best_low =9999999
             best_high = 0
             
+            trader.rewards_history.clear()
+            trader.rewards_history_episode.clear()
+            
             reward_system.sumaRecompensaProfit = 0
             reward_system.sumaRecompensaSharpe = 0
             reward_system.sumaRecompensaDrawndown = 0
@@ -326,12 +382,10 @@ def main():
 
             # Bucle que recorre cada estado en los datos que descargue de mt5
             for t in range(data_samples):
-                                
+            
                 # La ia toma una decision
                 action = trader.trade(state)
-                # Siguiente estado de la ia
-                next_state = states[t + 1] if t + 1 < data_samples else state
-            
+
                 # Comenzando la recompensa
                 reward = 0
                 # Precio actual
@@ -395,25 +449,26 @@ def main():
     
                     episode_returns_pips.append(profit_pips)
                     
+                    
                     reward, _ = calculate_advanced_reward(
                         reward_system, profit_dollars, current_equity, peak_equity,
-                        episode_returns_pips, is_trade_closed=True
+                        episode_returns_pips, is_trade_closed=True, add_noise=False
                     )
-                    
+
                     if profit_pips > 0:
                         wins += 1
                         winning_profits_pips.append(profit_pips)
                     else:
                         losses += 1
                         losing_profits_pips.append(profit_pips)
-                        
+
                     if episode == episodes and fold == n_folds - 1:
                         sell_points.append((timestamp, sell_price))
-                    
+
                     # Reset best values
                     best_low = 9999999.0
                     best_high = 0.0
-                    
+
                 elif action == 3 and len(trader.inventory_sell) <= 0:  # Venta en corto
                     trader.inventory_sell.append(sell_price)
                     #reward += 0.01 if t < len(alcista_values) and alcista_values[t] < 0 else -0.01
@@ -449,27 +504,27 @@ def main():
     
                     episode_returns_pips.append(profit_pips)
                     
+                    
                     reward, _ = calculate_advanced_reward(
                         reward_system, profit_dollars, current_equity, peak_equity,
-                        episode_returns_pips, is_trade_closed=True
+                        episode_returns_pips, is_trade_closed=True, add_noise=False
                     )
-                    
+
                     if profit_pips > 0:
                         wins += 1
                         winning_profits_pips.append(profit_pips)
                     else:
                         losses += 1
                         losing_profits_pips.append(profit_pips)
-                        
+
                     if episode == episodes and fold == n_folds - 1:
                         sell_points.append((timestamp, sell_price))
-                    
+
                     best_low = 9999999.0
                     best_high = 0.0
-                    
-                    
+
                 elif (len(trader.inventory) > 0 or len(trader.inventory_sell) > 0) and has_time and \
-                     t < len(hora_values) and int(hora_values[t].split(":")[0]) == 23:
+                     t < len(hora_int_pre) and hora_int_pre[t] == 23:
                     
                     if len(trader.inventory) > 0:
                         original_buy_price = trader.inventory.pop(0)
@@ -506,9 +561,10 @@ def main():
     
                     episode_returns_pips.append(profit_pips)
                     
+                    
                     reward, reward_components = calculate_advanced_reward(
                         reward_system, profit_dollars, current_equity, peak_equity,
-                        episode_returns_pips, is_trade_closed=True
+                        episode_returns_pips, is_trade_closed=True, add_noise=False
                     )
                     
                     if profit_pips > 0:
@@ -530,6 +586,22 @@ def main():
                 drawdown_real_history_episode.append(drawdown_real)
 
                 
+                # Step reward: pequeña señal de P&L no realizado para reducir esparsidad.
+                # Enseña al agente a mantener ganadores y cortar perdedores.
+                if reward == 0:
+                    if len(trader.inventory) > 0:
+                        upnl = (current_price - trader.inventory[0]) * pip_value_eur_usd
+                        reward += float(np.tanh(upnl / (balance_first * 0.02))) * 0.01
+                    elif len(trader.inventory_sell) > 0:
+                        upnl = (trader.inventory_sell[0] - current_price) * pip_value_eur_usd
+                        reward += float(np.tanh(upnl / (balance_first * 0.02))) * 0.01
+
+                # next_state incluye posición ACTUALIZADA tras la acción de este paso
+                next_t = min(t + 1, len(all_states) - 1)
+                next_price = close_prices[min(t + 1, data_samples - 1)]
+                next_state = get_full_state(all_states[next_t], trader.inventory, trader.inventory_sell,
+                                            next_price, pip_value_eur_usd, balance_first)
+
                 # Ver si termino el episodio
                 done = (t == data_samples - 1)
                 trader.total_rewards += reward
@@ -537,14 +609,12 @@ def main():
                 trader.remember(state, action, reward, next_state, done)
                 state = next_state
                 profit_dollars = 0
-                
-                
-                
-                if len(trader.memory) > batch_size and t % 5 == 0:  # Solo cada 10 pasos
-                    for _ in range(3):  # Entrenar 2–3 veces en cada iteración
+
+                if len(trader.memory) > batch_size and t % 5 == 0:
+                    for _ in range(3):
                         current_loss = trader.batch_train(batch_size)
-                        
-                    if hasattr(trader.model, "reset_noise"):
+
+                    if trader.has_noise:
                         trader.model.reset_noise()
 
                     if trader.epsilon > trader.epsilon_final:
@@ -607,7 +677,7 @@ def main():
                 
                 if guardar_estadisticas_en_backend:
                     status, result = upload_training_data(
-                        url = 'https://back-para-entrenamiento.onrender.com/api/upload',
+                        url=ConfigBackend.URL_BACKEND,
                         model_file_path="no",
                         graph_image_paths=[],
                         episode=episode,
@@ -659,9 +729,30 @@ def main():
     if len(test_data) > window_size:
         test_samples = len(test_data) - 1
 
+        # Pre-calculate test data components
+        test_close_prices = test_data['close'].values
+        test_low_prices = test_data['low'].values
+        test_high_prices = test_data['high'].values
+        test_spreads = test_data['spread'].values
+        test_timestamps = test_data.index.values
+
+        # Check for 'time' and 'ema_diference_close' in test_data specifically
+        has_time_test = 'time' in test_data.columns and test_data['time'].notnull().all()
+        hora_test_values = test_data['time'].values if has_time_test else None
+        hora_int_test_pre = np.array([int(h.split(":")[0]) for h in hora_test_values]) if has_time_test else None
+
+        has_alcista_test = 'ema_diference_close' in test_data.columns and test_data['ema_diference_close'].notnull().all()
+        alcista_test_values = test_data['ema_diference_close'].values if has_alcista_test else None
+
         print("Generando estados para el conjunto de prueba...")
-        test_states = np.array([state_creator_vectorized(test_data, t, window_size) for t in range(test_samples)])
+        _hora_int_test = hora_int_test_pre if hora_int_test_pre is not None else np.zeros(len(test_data), dtype=np.int32)
+        test_states = create_all_states_ohcl(test_data, window_size, scaler, _hora_int_test)
         print(f"Estados de prueba generados: {len(test_states)}")
+
+        # Modo evaluación: sin dropout, sin exploración aleatoria
+        trader.model.eval()
+        epsilon_backup = trader.epsilon
+        trader.epsilon = 0.0
 
         test_total_profit_pips = 0
         test_inventory = [] # Agent's inventory for test
@@ -681,25 +772,13 @@ def main():
         best_low_test = 9999999.0
         best_high_test = 0.0
 
-        # Pre-calculate test data components
-        test_close_prices = test_data['close'].values
-        test_low_prices = test_data['low'].values
-        test_high_prices = test_data['high'].values
-        test_spreads = test_data['spread'].values
-        test_timestamps = test_data.index.values
-
-        # Check for 'time' and 'ema_diference_close' in test_data specifically
-        has_time_test = 'time' in test_data.columns and test_data['time'].notnull().all()
-        hora_test_values = test_data['time'].values if has_time_test else None
-
-        has_alcista_test = 'ema_diference_close' in test_data.columns and test_data['ema_diference_close'].notnull().all()
-        alcista_test_values = test_data['ema_diference_close'].values if has_alcista_test else None
-
 
         for t in range(test_samples):
-            # The agent is in evaluation mode, so epsilon is very low/0 (greedy action)
-            test_action = trader.trade(test_states[t]) # Assuming AI_Trader has an is_eval mode for greedy actions
             current_price_test = test_close_prices[t]
+            # Estado con features de posición (igual que en entrenamiento)
+            test_state_full = get_full_state(test_states[t], test_inventory, test_inventory_sell,
+                                             current_price_test, pip_value_eur_usd, balance_first)
+            test_action = trader.trade(test_state_full)
             current_low_test = test_low_prices[t]
             current_high_test = test_high_prices[t]
             spread_test = test_spreads[t]
@@ -795,7 +874,7 @@ def main():
 
             # Time-based closure for test data, similar to training
             elif (len(test_inventory) > 0 or len(test_inventory_sell) > 0) and has_time_test and \
-                 t < len(hora_test_values) and int(hora_test_values[t].split(":")[0]) == 23:
+                 t < len(hora_int_test_pre) and hora_int_test_pre[t] == 23:
 
                 if len(test_inventory) > 0: # Close long
                     original_buy_price_test = test_inventory.pop(0)
@@ -834,6 +913,10 @@ def main():
             test_current_drawdown = (test_peak_equity - test_current_equity) / test_peak_equity if test_peak_equity != 0 else 0
             test_drawdown_history.append(test_current_drawdown)
 
+        # Restaurar modo entrenamiento y epsilon tras evaluación
+        trader.model.train()
+        trader.epsilon = epsilon_backup
+
         # Final calculations for the test set
         test_sharpe = calculate_sharpe_ratio(np.array(test_returns_pips)) if test_returns_pips else 0
         test_accuracy = wins_test / test_trades if test_trades > 0 else 0
@@ -854,7 +937,7 @@ def main():
         """)
 
         # Plotting the test trading session
-        plot_trading_session(test_data, test_buy_points, test_sell_points, symbol, intervalo, save_path=resultados_dir,
+        plot_trading_session(test_data, test_buy_points, test_sell_points, symbol, intervalo,1, save_path=resultados_dir,
                             )
     else:
         print("El conjunto de prueba es demasiado pequeño para realizar la evaluación.")

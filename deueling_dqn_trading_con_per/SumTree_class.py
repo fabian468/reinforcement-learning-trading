@@ -53,6 +53,14 @@ class SumTree(object):
     def total_priority(self):
         return self.tree[0]
 
+    @property
+    def max_priority(self):
+        """Retorna la prioridad máxima de las hojas almacenadas."""
+        if self.n_entries == 0:
+            return 1.0
+        max_p = self.tree[self.capacity - 1:].max()
+        return max_p if max_p > 0 else 1.0
+
     def clear(self):
         self.tree[:] = 0
         self.data[:] = 0

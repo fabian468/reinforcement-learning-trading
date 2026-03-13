@@ -21,28 +21,28 @@ class DuelingDQN(nn.Module):
 
         self.layer_norm = nn.LayerNorm(state_size)
 
-        # Capas densas principales
+        # Capas densas principales - dropout reducido para RL (no recomendable alto dropout en RL)
         self.fc1 = nn.Linear(state_size, 512)
         self.ln1 = nn.LayerNorm(512)
-        self.dropout1 = nn.Dropout(0.05)
+        self.dropout1 = nn.Dropout(0.02)  # Reducido de 0.05 a 0.02
 
         self.fc2 = nn.Linear(512, 256)
         self.ln2 = nn.LayerNorm(256)
-        self.dropout2 = nn.Dropout(0.05)
+        self.dropout2 = nn.Dropout(0.02)  # Reducido de 0.05 a 0.02
 
         self.fc3 = nn.Linear(256, 128)
         self.ln3 = nn.LayerNorm(128)
-        self.dropout3 = nn.Dropout(0.05)
+        self.dropout3 = nn.Dropout(0.02)  # Reducido de 0.05 a 0.02
 
         # Streams: value y advantage con NoisyLinear
         self.value_stream = nn.Linear(128, 64)
         self.value_ln = nn.LayerNorm(64)
-        self.value_dropout = nn.Dropout(0.05)
+        self.value_dropout = nn.Dropout(0.02)  # Reducido
         self.value = NoisyLinear(64, 1)
 
         self.advantage_stream = nn.Linear(128, 128)
         self.advantage_ln = nn.LayerNorm(128)
-        self.advantage_dropout = nn.Dropout(0.05)
+        self.advantage_dropout = nn.Dropout(0.02)  # Reducido
         self.advantage = NoisyLinear(128, action_space)
 
         self._init_weights()

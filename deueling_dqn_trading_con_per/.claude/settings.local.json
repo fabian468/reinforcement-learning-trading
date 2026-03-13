@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd \"C:\\\\Users\\\\fabia\\\\OneDrive\\\\Escritorio\\\\estrategias de inversiones\\\\reinforcement-learning-trading\\\\deueling_dqn_trading_con_per\" && python -c \"\nwith open\\('run_con_per.py', 'r', encoding='utf-8'\\) as f:\n    lines = f.readlines\\(\\)\n    for i, line in enumerate\\(lines[674:680], start=675\\):\n        print\\(f'{i}: {repr\\(line\\)}'\\)\")",
+      "Bash(cd \"C:\\\\Users\\\\fabia\\\\OneDrive\\\\Escritorio\\\\estrategias de inversiones\\\\reinforcement-learning-trading\\\\deueling_dqn_trading_con_per\" && python -c \"\nwith open\\('parametros.py', 'r', encoding='utf-8'\\) as f:\n    lines = f.readlines\\(\\)\n    for i, line in enumerate\\(lines[263:270], start=264\\):\n        print\\(f'{i}: {repr\\(line\\)}'\\)\")"
+    ]
+  }
+}
