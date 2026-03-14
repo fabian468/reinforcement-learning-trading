@@ -225,9 +225,9 @@ class LivePlot:
                                fontsize=10, fontweight='bold', color=color,
                                transform=self.ax_stats.transAxes)
             if i < n_cols - 1:
-                self.ax_stats.axvline(x=(i + 1) / n_cols, color='#dddddd',
-                                      linewidth=0.8,
-                                      transform=self.ax_stats.transAxes)
+                xv = (i + 1) / n_cols
+                self.ax_stats.plot([xv, xv], [0, 1], color='#dddddd',
+                                   linewidth=0.8, transform=self.ax_stats.transAxes)
 
         self.ax_stats.set_facecolor('#f8f8f8')
 
