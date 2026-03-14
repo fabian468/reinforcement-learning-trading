@@ -5,6 +5,8 @@ Para desactivar: ConfigBackend.LIVE_PLOT = False
 Para eliminar: borrar este archivo y quitar las llamadas en run_con_per.py
 """
 
+import matplotlib
+matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import numpy as np
@@ -111,8 +113,7 @@ class LivePlot:
         self.ax_equity.set_xlabel('Paso')
         self.ax_equity.grid(True, alpha=0.3)
 
-        self.fig.canvas.draw()
-        self.fig.canvas.flush_events()
+        plt.pause(0.001)
 
     def close(self):
         plt.ioff()
