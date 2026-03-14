@@ -306,10 +306,13 @@ def main():
 
 
         print("Generando estados...")
-        # Vectorizado: scaler.transform una vez + sliding_window_view (~100x más rápido)
-        # Genera data_samples+1 estados para incluir el next_state del último paso
-        all_states = create_all_states_ohcl(fold_data, window_size, scaler, hora_int_pre)
-        print(f"Estados generados: {len(all_states)}")
+        # Seleccionar tipo de estado según configuración
+        if ConfigEntorno.TIPO_ESTADO == 'advanced':
+            all_states = create_all_states_advanced(fold_data, window_size, scaler, hora_int_pre)
+            print(f"  [Advanced] Estados generados: {len(all_states)}")
+        else:
+            all_states = create_all_states_ohcl(fold_data, window_size, scaler, hora_int_pre)
+            print(f"  [OHLC] Estados generados: {len(all_states)}")
         
         # Crea las estadísticas para guardar
         trader.profit_history = []
@@ -477,34 +480,34 @@ def main():
                         
                 elif action == 4 and len(trader.inventory_sell) > 0:  # Cerrar venta en corto
                     original_sell_price = trader.inventory_sell.pop(0)
-                    
+
                     # USAR FUNCIÓN OPTIMIZADA
                     profit_pips, profit_dollars = calculate_short_profit_fast(
                         original_sell_price, buy_price, pip_value_eur_usd, trader.commission_per_trade, lot_size
                     )
-                    
+
                     pip_drawdrow_real, profit_drawdrow_real = calculate_short_profit_fast(
                         original_sell_price, best_high, pip_value_eur_usd, trader.commission_per_trade, lot_size
                     )
-                    
+
                     # Actualizar variables (mismo código que arriba)
                     total_profit_pips += profit_pips
                     profit_dollars_total += profit_dollars
                     trades_count += 1
                     current_drawdown_real += profit_drawdrow_real
                     current_equity += profit_dollars
-                    
+
                     if current_equity > peak_equity:
                         peak_equity = current_equity
                     elif current_equity < worse_equity:
                         worse_equity = current_equity
-                    
+
                     if current_drawdown_real > peak_equity_drawdrown_real:
                         peak_equity_drawdrown_real = current_drawdown_real
-    
+
                     episode_returns_pips.append(profit_pips)
-                    
-                    
+
+
                     reward, _ = calculate_advanced_reward(
                         reward_system, profit_dollars, current_equity, peak_equity,
                         episode_returns_pips, is_trade_closed=True, add_noise=False
@@ -518,7 +521,7 @@ def main():
                         losing_profits_pips.append(profit_pips)
 
                     if episode == episodes and fold == n_folds - 1:
-                        sell_points.append((timestamp, sell_price))
+                        buy_points.append((timestamp, buy_price))
 
                     best_low = 9999999.0
                     best_high = 0.0
@@ -702,30 +705,30 @@ def main():
                         with open(file, 'rb') as f:
                             dbx.files_upload(f.read(), dropbox_destination_path, mode=dropbox.files.WriteMode.overwrite)
 
-    # Plotting final
-    if buy_points or sell_points:
-        plot_trading_session(fold_data, buy_points, sell_points, symbol, intervalo, fold, save_path=resultados_dir)
+        # Plotting final
+        if buy_points or sell_points:
+            plot_trading_session(fold_data, buy_points, sell_points, symbol, intervalo, fold, save_path=resultados_dir)
 
-    fold_metrics = {
-        'fold': fold + 1,
-        'final_profit_pips': total_profit_pips,
-        'total_trades': trades_count,
-        'final_sharpe': sharpe,
-        'max_drawdown': max_drawdown,
-        'final_accuracy': accuracy,
-        'avg_win_pips': avg_win,
-        'avg_loss_pips': avg_loss
-    }
-    all_fold_metrics.append(fold_metrics)
+        fold_metrics = {
+            'fold': fold + 1,
+            'final_profit_pips': total_profit_pips,
+            'total_trades': trades_count,
+            'final_sharpe': sharpe,
+            'max_drawdown': max_drawdown,
+            'final_accuracy': accuracy,
+            'avg_win_pips': avg_win,
+            'avg_loss_pips': avg_loss
+        }
+        all_fold_metrics.append(fold_metrics)
 
-    print("\n{'='*30} Resultados de Validación Cruzada {'='*30}")
+    print(f"\n{'='*30} Resultados de Validación Cruzada {'='*30}")
     metrics_df = pd.DataFrame(all_fold_metrics)
     print(metrics_df)
     print("\nPromedio de Métricas:")
     print(metrics_df.mean(numeric_only=True))
 
     # Evaluación final en el conjunto de prueba (opcional)
-    print("\n{'='*30} Evaluación en Conjunto de Prueba {'='*30}")
+    print(f"\n{'='*30} Evaluación en Conjunto de Prueba {'='*30}")
     if len(test_data) > window_size:
         test_samples = len(test_data) - 1
 
@@ -746,8 +749,11 @@ def main():
 
         print("Generando estados para el conjunto de prueba...")
         _hora_int_test = hora_int_test_pre if hora_int_test_pre is not None else np.zeros(len(test_data), dtype=np.int32)
-        test_states = create_all_states_ohcl(test_data, window_size, scaler, _hora_int_test)
-        print(f"Estados de prueba generados: {len(test_states)}")
+        if ConfigEntorno.TIPO_ESTADO == 'advanced':
+            test_states = create_all_states_advanced(test_data, window_size, scaler, _hora_int_test)
+        else:
+            test_states = create_all_states_ohcl(test_data, window_size, scaler, _hora_int_test)
+        print(f"Estados de prueba generados: {len(test_states)} - Tipo: {ConfigEntorno.TIPO_ESTADO}")
 
         # Modo evaluación: sin dropout, sin exploración aleatoria
         trader.model.eval()
