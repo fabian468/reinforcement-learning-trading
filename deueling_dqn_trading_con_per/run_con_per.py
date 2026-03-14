@@ -581,14 +581,16 @@ def main():
                         reward_system, profit_dollars, current_equity, peak_equity,
                         episode_returns_pips, is_trade_closed=True, add_noise=False
                     )
-                    
+                    # Penalización por cierre forzado: el agente no decidió cerrar
+                    reward -= 0.02
+
                     if profit_pips > 0:
                         wins += 1
                         winning_profits_pips.append(profit_pips)
                     else:
                         losses += 1
                         losing_profits_pips.append(profit_pips)
-                        
+
                     if episode == episodes and fold == n_folds - 1:
                         sell_points.append((timestamp, sell_price))
                 

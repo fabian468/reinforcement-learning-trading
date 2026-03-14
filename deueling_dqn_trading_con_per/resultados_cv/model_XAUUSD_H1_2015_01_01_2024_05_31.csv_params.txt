@@ -1,4 +1,4 @@
-epsilon:0.1493937621198741
+epsilon:0.9752487531218751
 step_counter:34494
 use_double_dqn:True
 reward_noise_std:0.01

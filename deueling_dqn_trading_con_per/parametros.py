@@ -216,7 +216,7 @@ class ConfigModelo:
 
     # ¿Cargar modelo existente?
     CARGAR_MODELO = False
-    MODELO_EXISTENTE = "resultados_cv/model_XAUUSD_M15_2025_03_01_2025_03_31.csv"
+    MODELO_EXISTENTE = "resultados_cv/model_XAUUSD_H1_2015_01_01_2024_05_31.csv"
 
     # ¿Cargar memoria previa?
     CARGAR_MEMORIA_BUFFER = True
@@ -242,7 +242,7 @@ class ConfigBackend:
     MOSTRAR_PRINTS = False
 
     # TensorBoard: True = activo, False = desactivado (para entrenar en la nube)
-    TENSORBOARD = True
+    TENSORBOARD = False
 
     # Gráfico en vivo de compras/ventas: True = activo, False = desactivado
     LIVE_PLOT = True

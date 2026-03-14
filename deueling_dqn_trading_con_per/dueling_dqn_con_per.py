@@ -402,10 +402,6 @@ class AI_Trader_per():
             self.model.load_state_dict(checkpoint['model_state_dict'])
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             
-            # Cargar scheduler si existe
-            if 'scheduler_state_dict' in checkpoint and self.scheduler is not None:
-                self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-            
             # Cargar modelo target si existe
             if self.use_double_dqn and os.path.exists(f"{name}_target.pth"):
                 target_checkpoint = torch.load(f"{name}_target.pth", map_location=self.device)
@@ -458,9 +454,11 @@ class AI_Trader_per():
                             elif key == "cosine_restarts":
                                 self.cosine_restarts = value.lower() == "true"
                                 
-                # Recrear scheduler después de cargar parámetros
+                # Recrear scheduler después de cargar parámetros, luego restaurar su estado
                 self.scheduler = self._create_scheduler()
-                                
+                if 'scheduler_state_dict' in checkpoint and self.scheduler is not None:
+                    self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
                 print(f"Modelo cargado desde {name}.pth con epsilon = {self.epsilon} y parámetros.")
             else:
                 print("Archivo de parámetros no encontrado, manteniendo valores por defecto.")
