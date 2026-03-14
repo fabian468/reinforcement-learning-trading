@@ -48,6 +48,7 @@ from request_datos_backend import upload_training_data
 from plot_stadist import plot_trading_session
 
 from indicadores import  add_ema200_distance
+from tensorboard_logger import TBLogger
 
 DROPBOX_ACCESS_TOKEN = os.getenv("ACCESS_TOKEN_DROPBOX")
 
@@ -176,6 +177,9 @@ def main():
     guardar_estadisticas_en_backend = ConfigBackend.GUARDAR_ESTADISTICAS_EN_BACKEND
     guardar_en_dropbox = ConfigBackend.GUARDAR_EN_DROPBOX
     mostrar_prints = ConfigBackend.MOSTRAR_PRINTS
+
+    # TensorBoard
+    logger = TBLogger() if ConfigBackend.TENSORBOARD else None
 
     symbol = ConfigEntorno.SYMBOL
     intervalo = ConfigEntorno.INTERVALO
@@ -617,6 +621,9 @@ def main():
                     for _ in range(3):
                         current_loss = trader.batch_train(batch_size)
 
+                    if logger:
+                        logger.log_train_step(trader.step_counter, current_loss, trader.learning_rate)
+
                     if trader.has_noise:
                         trader.model.reset_noise()
 
@@ -672,6 +679,15 @@ def main():
             trader.accuracy_history.append(accuracy)
             trader.avg_win_history.append(avg_win)
             trader.avg_loss_history.append(avg_loss)
+
+            if logger:
+                logger.log_episode(
+                    fold=fold + 1, episode=episode,
+                    profit_usd=profit_dollars_total, profit_pips=total_profit_pips,
+                    equity=current_equity, sharpe=sharpe, drawdown=max_drawdown,
+                    accuracy=accuracy, trades=trades_count,
+                    epsilon=trader.epsilon, reward_episode=reward_episode
+                )
             
             # GUARDAR MODELO MENOS FRECUENTEMENTE
             if episode % cada_cuantos_episodes_guardar_el_modelo == 0:  # Menos frecuente
@@ -720,6 +736,14 @@ def main():
             'avg_loss_pips': avg_loss
         }
         all_fold_metrics.append(fold_metrics)
+
+        if logger:
+            logger.log_fold_summary(
+                fold=fold + 1,
+                profit_usd=profit_dollars_total, profit_pips=total_profit_pips,
+                sharpe=sharpe, drawdown=max_drawdown, accuracy=accuracy,
+                avg_win=avg_win, avg_loss=avg_loss, trades=trades_count
+            )
 
     print(f"\n{'='*30} Resultados de Validación Cruzada {'='*30}")
     metrics_df = pd.DataFrame(all_fold_metrics)
@@ -942,11 +966,21 @@ def main():
     Equity Final={test_current_equity:.2f}
         """)
 
+        if logger:
+            logger.log_test_results(
+                profit_usd=test_profit_dollars_total, profit_pips=test_total_profit_pips,
+                sharpe=test_sharpe, drawdown=test_max_drawdown, accuracy=test_accuracy,
+                equity=test_current_equity, trades=test_trades
+            )
+
         # Plotting the test trading session
         plot_trading_session(test_data, test_buy_points, test_sell_points, symbol, intervalo,1, save_path=resultados_dir,
                             )
     else:
         print("El conjunto de prueba es demasiado pequeño para realizar la evaluación.")
+
+    if logger:
+        logger.close()
 
 def run_main():
     main()

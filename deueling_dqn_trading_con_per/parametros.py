@@ -36,7 +36,7 @@ class ConfigEntorno:
     # Tipo de estado a usar:
     # 'ohlc'       = solo OHLC + hora (actual, básico)
     # 'advanced'   = OHLC + RSI + MACD + día + hora (nuevo, más completo)
-    TIPO_ESTADO = 'ohlc'
+    TIPO_ESTADO = 'advanced'
 
     # División train/test
     TEST_SIZE_RATIO = 0.2   # 20% para prueba
@@ -240,6 +240,9 @@ class ConfigBackend:
 
     # Mostrar prints durante entrenamiento
     MOSTRAR_PRINTS = False
+
+    # TensorBoard: True = activo, False = desactivado (para entrenar en la nube)
+    TENSORBOARD = True
 
 
 # ==============================================================================
