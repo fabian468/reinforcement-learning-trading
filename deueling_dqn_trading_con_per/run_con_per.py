@@ -637,6 +637,7 @@ def main():
                         random_count=trader.random_action_count,
                         model_count=trader.model_action_count,
                         loss=trader.loss_history[-1] if trader.loss_history else 0.0,
+                        is_random=trader.last_action_was_random,
                     )
 
                 if len(trader.memory) > batch_size and t % 5 == 0:
