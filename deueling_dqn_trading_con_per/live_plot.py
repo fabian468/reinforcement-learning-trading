@@ -85,12 +85,28 @@ def _plot_process(queue, window_prices, update_every):
         ax_price.clear()
         ax_price.plot(x_range, px, color='#4a90d9', linewidth=1, label='Precio')
 
-        # Líneas de conexión entrada → salida
+        # Líneas de trades cerrados: entrada → salida
         for t0, p0, t1, p1, ok in visible:
             color = '#2ecc71' if ok else '#e74c3c'
             ax_price.plot([t0, t1], [p0, p1],
                           color=color, linewidth=1.5,
                           linestyle='--', alpha=0.75, zorder=3)
+
+        # Línea "en vivo" para posición abierta (entrada → precio actual)
+        current_price = px[-1] if px else None
+        if current_price is not None:
+            if open_long and open_long[0] >= start:
+                unrealized = current_price - open_long[1]
+                live_color = '#2ecc71' if unrealized >= 0 else '#e74c3c'
+                ax_price.plot([open_long[0], t_global], [open_long[1], current_price],
+                              color=live_color, linewidth=1.5,
+                              linestyle=':', alpha=0.9, zorder=3)
+            if open_short and open_short[0] >= start:
+                unrealized = open_short[1] - current_price
+                live_color = '#2ecc71' if unrealized >= 0 else '#e74c3c'
+                ax_price.plot([open_short[0], t_global], [open_short[1], current_price],
+                              color=live_color, linewidth=1.5,
+                              linestyle=':', alpha=0.9, zorder=3)
 
         # Markers de compra / venta
         if bx:
