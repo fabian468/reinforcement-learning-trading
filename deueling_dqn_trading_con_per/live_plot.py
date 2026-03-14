@@ -25,50 +25,91 @@ def _plot_process(queue, window_prices, update_every):
     matplotlib.use('TkAgg')
     import matplotlib.pyplot as plt
     import matplotlib.gridspec as gridspec
+    from matplotlib.widgets import Button
 
-    prices    = deque(maxlen=window_prices)
-    equity    = []
-    buy_xs    = []
-    buy_ys    = []
-    sell_xs   = []
-    sell_ys   = []
-    t_global  = 0
-    fold      = 1
-    episode   = 1
+    # --- Estado interno ---
+    prices       = deque(maxlen=window_prices)
+    equity       = []
+    buy_markers  = []   # lista de (t, price)
+    sell_markers = []   # lista de (t, price)
+    trade_lines  = []   # lista de (t_open, px_open, t_close, px_close, is_profit)
+    open_long    = None # (t, price) de la posición long abierta
+    open_short   = None # (t, price) de la posición short abierta
+    t_global     = 0
+    fold         = 1
+    episode      = 1
+    paused       = [False]
 
+    # --- Figura ---
     plt.ion()
-    fig = plt.figure(figsize=(14, 7))
-    gs  = gridspec.GridSpec(2, 1, height_ratios=[3, 1], hspace=0.35)
+    fig = plt.figure(figsize=(14, 8))
+    gs  = gridspec.GridSpec(2, 1, height_ratios=[3, 1], hspace=0.35,
+                            top=0.93, bottom=0.12)
     ax_price  = fig.add_subplot(gs[0])
     ax_equity = fig.add_subplot(gs[1])
     fig.suptitle('Entrenamiento en vivo', fontsize=13, fontweight='bold')
+
+    # --- Botón de pausa ---
+    ax_btn = fig.add_axes([0.44, 0.02, 0.13, 0.045])
+    btn    = Button(ax_btn, 'Pausa', color='#f0f0f0', hovercolor='#d0d0d0')
+
+    def toggle_pause(event):
+        paused[0] = not paused[0]
+        btn.label.set_text('Reanudar' if paused[0] else 'Pausa')
+        fig.canvas.draw_idle()
+
+    btn.on_clicked(toggle_pause)
     plt.show(block=False)
 
+    # --- Función de dibujo ---
     def draw():
         px = list(prices)
         n  = len(px)
         if n == 0:
             return
 
-        start = t_global - n + 1
+        start   = t_global - n + 1
+        x_range = range(start, start + n)
 
-        # Filtrar markers en la ventana visible
-        bx = [x for x in buy_xs  if x >= start]
-        by = [buy_ys[buy_xs.index(x)]   for x in bx]
-        sx = [x for x in sell_xs if x >= start]
-        sy = [sell_ys[sell_xs.index(x)] for x in sx]
+        # Markers en la ventana visible
+        bx = [t for t, p in buy_markers  if t >= start]
+        by = [p for t, p in buy_markers  if t >= start]
+        sx = [t for t, p in sell_markers if t >= start]
+        sy = [p for t, p in sell_markers if t >= start]
+
+        # Líneas de trades en la ventana visible (al menos un extremo visible)
+        visible = [(t0, p0, t1, p1, ok)
+                   for t0, p0, t1, p1, ok in trade_lines
+                   if t1 >= start or t0 >= start]
 
         ax_price.clear()
-        ax_price.plot(range(start, start + n), px, color='#4a90d9', linewidth=1, label='Precio')
+        ax_price.plot(x_range, px, color='#4a90d9', linewidth=1, label='Precio')
+
+        # Líneas de conexión entrada → salida
+        for t0, p0, t1, p1, ok in visible:
+            color = '#2ecc71' if ok else '#e74c3c'
+            ax_price.plot([t0, t1], [p0, p1],
+                          color=color, linewidth=1.5,
+                          linestyle='--', alpha=0.75, zorder=3)
+
+        # Markers de compra / venta
         if bx:
-            ax_price.scatter(bx, by, marker='^', color='#2ecc71', s=80, zorder=5, label='Compra')
+            ax_price.scatter(bx, by, marker='^', color='#2ecc71',
+                             s=100, zorder=5, label='Compra / Cierre short')
         if sx:
-            ax_price.scatter(sx, sy, marker='v', color='#e74c3c', s=80, zorder=5, label='Venta')
-        ax_price.set_title(f'Fold {fold} | Episodio {episode} | Paso {t_global}', fontsize=10)
+            ax_price.scatter(sx, sy, marker='v', color='#e74c3c',
+                             s=100, zorder=5, label='Venta / Apertura short')
+
+        estado = '  ⏸ PAUSADO' if paused[0] else ''
+        ax_price.set_title(
+            f'Fold {fold} | Episodio {episode} | Paso {t_global}{estado}',
+            fontsize=10
+        )
         ax_price.set_ylabel('Precio')
         ax_price.legend(loc='upper left', fontsize=8)
         ax_price.grid(True, alpha=0.3)
 
+        # Panel equity
         ax_equity.clear()
         eq = list(equity)
         if eq:
@@ -81,9 +122,11 @@ def _plot_process(queue, window_prices, update_every):
 
         plt.pause(0.001)
 
+    # --- Loop principal del proceso ---
     while True:
-        # Vaciar la queue completamente antes de dibujar
         new_data = False
+
+        # Siempre vaciamos la queue para no bloquear el training
         while not queue.empty():
             try:
                 msg = queue.get_nowait()
@@ -96,12 +139,13 @@ def _plot_process(queue, window_prices, update_every):
                 _, fold, episode = msg
                 prices.clear()
                 equity.clear()
-                buy_xs.clear()
-                buy_ys.clear()
-                sell_xs.clear()
-                sell_ys.clear()
-                t_global = 0
-                new_data = True
+                buy_markers.clear()
+                sell_markers.clear()
+                trade_lines.clear()
+                open_long  = None
+                open_short = None
+                t_global   = 0
+                new_data   = True
 
             elif kind == 'step':
                 _, t, price, eq, action, inv, inv_sell = msg
@@ -109,20 +153,31 @@ def _plot_process(queue, window_prices, update_every):
                 prices.append(price)
                 equity.append(eq)
 
-                # El inventario ya fue actualizado antes de llamar a update(),
+                # El inventario ya está actualizado cuando llega el mensaje,
                 # por eso chequeamos el estado POST-acción:
-                # action 1 (compra): inventory pasó de 0 → 1
-                # action 2 (venta): inventory pasó de 1 → 0
-                # action 3 (short): inventory_sell pasó de 0 → 1
-                # action 4 (cover): inventory_sell pasó de 1 → 0
-                if action == 1 and len(inv) == 1:
-                    buy_xs.append(t); buy_ys.append(price)
-                elif action == 2 and len(inv) == 0:
-                    sell_xs.append(t); sell_ys.append(price)
-                elif action == 3 and len(inv_sell) == 1:
-                    sell_xs.append(t); sell_ys.append(price)
-                elif action == 4 and len(inv_sell) == 0:
-                    buy_xs.append(t); buy_ys.append(price)
+                if action == 1 and len(inv) == 1:          # compra ejecutada
+                    open_long = (t, price)
+                    buy_markers.append((t, price))
+
+                elif action == 2 and len(inv) == 0:        # cierre long ejecutado
+                    sell_markers.append((t, price))
+                    if open_long:
+                        is_profit = price > open_long[1]
+                        trade_lines.append((open_long[0], open_long[1],
+                                            t, price, is_profit))
+                        open_long = None
+
+                elif action == 3 and len(inv_sell) == 1:   # short ejecutado
+                    open_short = (t, price)
+                    sell_markers.append((t, price))
+
+                elif action == 4 and len(inv_sell) == 0:   # cierre short ejecutado
+                    buy_markers.append((t, price))
+                    if open_short:
+                        is_profit = price < open_short[1]  # short gana si baja
+                        trade_lines.append((open_short[0], open_short[1],
+                                            t, price, is_profit))
+                        open_short = None
 
                 if t % update_every == 0 and t > 0:
                     new_data = True
@@ -132,10 +187,12 @@ def _plot_process(queue, window_prices, update_every):
                 plt.close(fig)
                 return
 
-        if new_data:
+        # Dibujar solo si hay datos nuevos Y no está pausado
+        if not paused[0] and new_data:
             draw()
         else:
-            plt.pause(0.05)   # espera breve para no quemar CPU cuando no hay datos
+            # Mantener el event loop activo (para el botón y el hover)
+            plt.pause(0.05)
 
 
 # ==============================================================================
