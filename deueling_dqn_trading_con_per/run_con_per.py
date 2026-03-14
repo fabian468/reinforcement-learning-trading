@@ -648,9 +648,6 @@ def main():
 
                     if trader.has_noise:
                         trader.model.reset_noise()
-
-                    if trader.epsilon > trader.epsilon_final:
-                        trader.epsilon *= trader.epsilon_decay
             
             # MOSTRAR PRINTS MENOS FRECUENTEMENTE
                 if mostrar_prints and t % 3000 == 0:  # Aumenté la frecuencia
@@ -690,6 +687,10 @@ def main():
     Recompensa total: {trader.total_rewards:.2f}
                 """)
             
+            # Decay de epsilon una vez por episodio
+            if trader.epsilon > trader.epsilon_final:
+                trader.epsilon *= trader.epsilon_decay
+
             # Guardar estadísticas
             trader.profit_history.append(profit_dollars_total)
             trader.epsilon_history.append(trader.epsilon)
