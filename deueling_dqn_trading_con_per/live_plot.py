@@ -7,10 +7,6 @@ Para eliminar: borrar este archivo y quitar las llamadas en run_con_per.py
 """
 
 import multiprocessing as mp
-import matplotlib
-matplotlib.use('TkAgg')
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
 import numpy as np
 from collections import deque
 
@@ -24,6 +20,12 @@ def _plot_process(queue, window_prices, update_every):
     Función que corre en el proceso hijo.
     Lee mensajes de la queue y actualiza el gráfico.
     """
+    # Importar matplotlib aquí para no afectar el backend del proceso principal
+    import matplotlib
+    matplotlib.use('TkAgg')
+    import matplotlib.pyplot as plt
+    import matplotlib.gridspec as gridspec
+
     prices    = deque(maxlen=window_prices)
     equity    = []
     buy_xs    = []
@@ -107,11 +109,17 @@ def _plot_process(queue, window_prices, update_every):
                 prices.append(price)
                 equity.append(eq)
 
-                if action == 1 and not inv:
+                # El inventario ya fue actualizado antes de llamar a update(),
+                # por eso chequeamos el estado POST-acción:
+                # action 1 (compra): inventory pasó de 0 → 1
+                # action 2 (venta): inventory pasó de 1 → 0
+                # action 3 (short): inventory_sell pasó de 0 → 1
+                # action 4 (cover): inventory_sell pasó de 1 → 0
+                if action == 1 and len(inv) == 1:
                     buy_xs.append(t); buy_ys.append(price)
                 elif action == 2 and len(inv) == 0:
                     sell_xs.append(t); sell_ys.append(price)
-                elif action == 3 and not inv_sell:
+                elif action == 3 and len(inv_sell) == 1:
                     sell_xs.append(t); sell_ys.append(price)
                 elif action == 4 and len(inv_sell) == 0:
                     buy_xs.append(t); buy_ys.append(price)
