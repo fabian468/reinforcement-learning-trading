@@ -12,15 +12,11 @@ from collections import deque
 
 
 # ==============================================================================
-# PROCESO SEPARADO: corre el gráfico de forma independiente
+# PROCESO SEPARADO
 # ==============================================================================
 
 def _plot_process(queue, window_prices, update_every):
-    """
-    Función que corre en el proceso hijo.
-    Lee mensajes de la queue y actualiza el gráfico.
-    """
-    # Importar matplotlib aquí para no afectar el backend del proceso principal
+
     import matplotlib
     matplotlib.use('TkAgg')
     import matplotlib.pyplot as plt
@@ -28,29 +24,40 @@ def _plot_process(queue, window_prices, update_every):
     from matplotlib.widgets import Button
 
     # --- Estado interno ---
-    prices       = deque(maxlen=window_prices)
-    equity       = []
-    buy_markers  = []   # lista de (t, price)
-    sell_markers = []   # lista de (t, price)
-    trade_lines  = []   # lista de (t_open, px_open, t_close, px_close, is_profit)
-    open_long    = None # (t, price) de la posición long abierta
-    open_short   = None # (t, price) de la posición short abierta
-    t_global     = 0
-    fold         = 1
-    episode      = 1
-    paused       = [False]
+    prices        = deque(maxlen=window_prices)
+    equity        = []
+    buy_markers   = []
+    sell_markers  = []
+    trade_lines   = []
+    open_long     = None
+    open_short    = None
+    t_global      = 0
+    fold          = 1
+    episode       = 1
+    paused        = [False]
+
+    # Stats
+    epsilon       = 1.0
+    reward_ep     = 0.0
+    trades        = 0
+    wins          = 0
+    losses        = 0
+    random_count  = 0
+    model_count   = 0
+    loss_val      = 0.0
 
     # --- Figura ---
     plt.ion()
-    fig = plt.figure(figsize=(14, 8))
-    gs  = gridspec.GridSpec(2, 1, height_ratios=[3, 1], hspace=0.35,
-                            top=0.93, bottom=0.12)
+    fig = plt.figure(figsize=(15, 9))
+    gs  = gridspec.GridSpec(3, 1, height_ratios=[4, 1.8, 1.2],
+                            hspace=0.45, top=0.93, bottom=0.10)
     ax_price  = fig.add_subplot(gs[0])
     ax_equity = fig.add_subplot(gs[1])
+    ax_stats  = fig.add_subplot(gs[2])
     fig.suptitle('Entrenamiento en vivo', fontsize=13, fontweight='bold')
 
-    # --- Botón de pausa ---
-    ax_btn = fig.add_axes([0.44, 0.02, 0.13, 0.045])
+    # Botón pausa
+    ax_btn = fig.add_axes([0.44, 0.01, 0.13, 0.04])
     btn    = Button(ax_btn, 'Pausa', color='#f0f0f0', hovercolor='#d0d0d0')
 
     def toggle_pause(event):
@@ -71,44 +78,39 @@ def _plot_process(queue, window_prices, update_every):
         start   = t_global - n + 1
         x_range = range(start, start + n)
 
-        # Markers en la ventana visible
+        # Markers visibles
         bx = [t for t, p in buy_markers  if t >= start]
         by = [p for t, p in buy_markers  if t >= start]
         sx = [t for t, p in sell_markers if t >= start]
         sy = [p for t, p in sell_markers if t >= start]
 
-        # Líneas de trades en la ventana visible (al menos un extremo visible)
-        visible = [(t0, p0, t1, p1, ok)
-                   for t0, p0, t1, p1, ok in trade_lines
+        # Líneas de trades cerrados
+        visible = [(t0, p0, t1, p1, ok) for t0, p0, t1, p1, ok in trade_lines
                    if t1 >= start or t0 >= start]
 
+        # --- Panel precio ---
         ax_price.clear()
         ax_price.plot(x_range, px, color='#4a90d9', linewidth=1, label='Precio')
 
-        # Líneas de trades cerrados: entrada → salida
         for t0, p0, t1, p1, ok in visible:
             color = '#2ecc71' if ok else '#e74c3c'
-            ax_price.plot([t0, t1], [p0, p1],
-                          color=color, linewidth=1.5,
-                          linestyle='--', alpha=0.75, zorder=3)
+            ax_price.plot([t0, t1], [p0, p1], color=color,
+                          linewidth=1.5, linestyle='--', alpha=0.75, zorder=3)
 
-        # Línea "en vivo" para posición abierta (entrada → precio actual)
-        current_price = px[-1] if px else None
-        if current_price is not None:
+        # Línea en vivo para posición abierta
+        curr = px[-1] if px else None
+        if curr is not None:
             if open_long and open_long[0] >= start:
-                unrealized = current_price - open_long[1]
-                live_color = '#2ecc71' if unrealized >= 0 else '#e74c3c'
-                ax_price.plot([open_long[0], t_global], [open_long[1], current_price],
-                              color=live_color, linewidth=1.5,
-                              linestyle=':', alpha=0.9, zorder=3)
+                ok = curr >= open_long[1]
+                ax_price.plot([open_long[0], t_global], [open_long[1], curr],
+                              color='#2ecc71' if ok else '#e74c3c',
+                              linewidth=1.5, linestyle=':', alpha=0.9, zorder=3)
             if open_short and open_short[0] >= start:
-                unrealized = open_short[1] - current_price
-                live_color = '#2ecc71' if unrealized >= 0 else '#e74c3c'
-                ax_price.plot([open_short[0], t_global], [open_short[1], current_price],
-                              color=live_color, linewidth=1.5,
-                              linestyle=':', alpha=0.9, zorder=3)
+                ok = curr <= open_short[1]
+                ax_price.plot([open_short[0], t_global], [open_short[1], curr],
+                              color='#2ecc71' if ok else '#e74c3c',
+                              linewidth=1.5, linestyle=':', alpha=0.9, zorder=3)
 
-        # Markers de compra / venta
         if bx:
             ax_price.scatter(bx, by, marker='^', color='#2ecc71',
                              s=100, zorder=5, label='Compra / Cierre short')
@@ -118,31 +120,67 @@ def _plot_process(queue, window_prices, update_every):
 
         estado = '  ⏸ PAUSADO' if paused[0] else ''
         ax_price.set_title(
-            f'Fold {fold} | Episodio {episode} | Paso {t_global}{estado}',
-            fontsize=10
-        )
+            f'Fold {fold} | Episodio {episode} | Paso {t_global}{estado}', fontsize=10)
         ax_price.set_ylabel('Precio')
         ax_price.legend(loc='upper left', fontsize=8)
         ax_price.grid(True, alpha=0.3)
 
-        # Panel equity
+        # --- Panel equity ---
         ax_equity.clear()
         eq = list(equity)
         if eq:
             color = '#2ecc71' if eq[-1] >= eq[0] else '#e74c3c'
             ax_equity.plot(eq, color=color, linewidth=1)
             ax_equity.axhline(y=eq[0], color='gray', linestyle='--', linewidth=0.8)
-        ax_equity.set_ylabel('Equity ($)')
-        ax_equity.set_xlabel('Paso')
+            ax_equity.set_ylabel('Equity ($)')
+            ax_equity.set_xlabel('Paso')
         ax_equity.grid(True, alpha=0.3)
+
+        # --- Panel stats ---
+        ax_stats.clear()
+        ax_stats.axis('off')
+
+        total_actions = random_count + model_count
+        pct_random = (random_count / total_actions * 100) if total_actions > 0 else 0
+        pct_model  = (model_count  / total_actions * 100) if total_actions > 0 else 0
+        win_rate   = (wins / trades * 100) if trades > 0 else 0
+        eq_val     = eq[-1] if eq else 0.0
+        pnl_color  = '#2ecc71' if eq_val >= (eq[0] if eq else eq_val) else '#e74c3c'
+
+        stats = [
+            ('Epsilon',   f'{epsilon:.3f}',          '#e67e22'),
+            ('Reward ep', f'{reward_ep:.2f}',         '#2ecc71' if reward_ep >= 0 else '#e74c3c'),
+            ('Loss',      f'{loss_val:.5f}',          '#9b59b6'),
+            ('Trades',    f'{trades}',                '#4a90d9'),
+            ('Wins',      f'{wins}  ({win_rate:.0f}%)', '#2ecc71'),
+            ('Losses',    f'{losses}',                '#e74c3c'),
+            ('Random',    f'{random_count}  ({pct_random:.0f}%)', '#e67e22'),
+            ('Modelo',    f'{model_count}  ({pct_model:.0f}%)',   '#3498db'),
+            ('Equity',    f'${eq_val:.2f}',           pnl_color),
+        ]
+
+        n_cols = len(stats)
+        for i, (label, value, color) in enumerate(stats):
+            x = (i + 0.5) / n_cols
+            ax_stats.text(x, 0.72, label, ha='center', va='center',
+                          fontsize=8, color='#888888', transform=ax_stats.transAxes)
+            ax_stats.text(x, 0.28, value, ha='center', va='center',
+                          fontsize=10, fontweight='bold', color=color,
+                          transform=ax_stats.transAxes)
+            # Separadores verticales
+            if i < n_cols - 1:
+                ax_stats.axvline(x=(i + 1) / n_cols, color='#dddddd',
+                                 linewidth=0.8, transform=ax_stats.transAxes)
+
+        ax_stats.set_facecolor('#f8f8f8')
+        fig.patch.set_facecolor('#ffffff')
 
         plt.pause(0.001)
 
-    # --- Loop principal del proceso ---
+    # --- Loop principal ---
     while True:
         new_data = False
 
-        # Siempre vaciamos la queue para no bloquear el training
         while not queue.empty():
             try:
                 msg = queue.get_nowait()
@@ -164,35 +202,39 @@ def _plot_process(queue, window_prices, update_every):
                 new_data   = True
 
             elif kind == 'step':
-                _, t, price, eq, action, inv, inv_sell = msg
-                t_global = t
+                (_, t, price, eq, action, inv, inv_sell,
+                 eps, rew, trd, w, l, rc, mc, lv) = msg
+
+                t_global     = t
+                epsilon      = eps
+                reward_ep    = rew
+                trades       = trd
+                wins         = w
+                losses       = l
+                random_count = rc
+                model_count  = mc
+                loss_val     = lv
+
                 prices.append(price)
                 equity.append(eq)
 
-                # El inventario ya está actualizado cuando llega el mensaje,
-                # por eso chequeamos el estado POST-acción:
-                if action == 1 and len(inv) == 1:          # compra ejecutada
+                if action == 1 and len(inv) == 1:
                     open_long = (t, price)
                     buy_markers.append((t, price))
-
-                elif action == 2 and len(inv) == 0:        # cierre long ejecutado
+                elif action == 2 and len(inv) == 0:
                     sell_markers.append((t, price))
                     if open_long:
-                        is_profit = price > open_long[1]
                         trade_lines.append((open_long[0], open_long[1],
-                                            t, price, is_profit))
+                                            t, price, price > open_long[1]))
                         open_long = None
-
-                elif action == 3 and len(inv_sell) == 1:   # short ejecutado
+                elif action == 3 and len(inv_sell) == 1:
                     open_short = (t, price)
                     sell_markers.append((t, price))
-
-                elif action == 4 and len(inv_sell) == 0:   # cierre short ejecutado
+                elif action == 4 and len(inv_sell) == 0:
                     buy_markers.append((t, price))
                     if open_short:
-                        is_profit = price < open_short[1]  # short gana si baja
                         trade_lines.append((open_short[0], open_short[1],
-                                            t, price, is_profit))
+                                            t, price, price < open_short[1]))
                         open_short = None
 
                 if t % update_every == 0 and t > 0:
@@ -203,16 +245,14 @@ def _plot_process(queue, window_prices, update_every):
                 plt.close(fig)
                 return
 
-        # Dibujar solo si hay datos nuevos Y no está pausado
         if not paused[0] and new_data:
             draw()
         else:
-            # Mantener el event loop activo (para el botón y el hover)
             plt.pause(0.05)
 
 
 # ==============================================================================
-# CLASE PÚBLICA: usada desde run_con_per.py
+# CLASE PÚBLICA
 # ==============================================================================
 
 class LivePlot:
@@ -228,11 +268,14 @@ class LivePlot:
     def reset_episode(self, fold, episode):
         self._queue.put(('reset', fold, episode))
 
-    def update(self, t, price, current_equity, action, inventory, inventory_sell):
-        # Copiar listas para evitar compartir estado mutable entre procesos
+    def update(self, t, price, current_equity, action, inventory, inventory_sell,
+               epsilon=1.0, reward_episode=0.0, trades=0, wins=0, losses=0,
+               random_count=0, model_count=0, loss=0.0):
         self._queue.put((
             'step', t, price, current_equity, action,
-            list(inventory), list(inventory_sell)
+            list(inventory), list(inventory_sell),
+            epsilon, reward_episode, trades, wins, losses,
+            random_count, model_count, loss
         ))
 
     def close(self):

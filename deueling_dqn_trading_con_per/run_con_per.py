@@ -626,8 +626,18 @@ def main():
                 profit_dollars = 0
 
                 if live:
-                    live.update(t, current_price, current_equity, action,
-                                trader.inventory, trader.inventory_sell)
+                    live.update(
+                        t, current_price, current_equity, action,
+                        trader.inventory, trader.inventory_sell,
+                        epsilon=trader.epsilon,
+                        reward_episode=reward_episode,
+                        trades=trades_count,
+                        wins=wins,
+                        losses=losses,
+                        random_count=trader.random_action_count,
+                        model_count=trader.model_action_count,
+                        loss=trader.loss_history[-1] if trader.loss_history else 0.0,
+                    )
 
                 if len(trader.memory) > batch_size and t % 5 == 0:
                     for _ in range(3):

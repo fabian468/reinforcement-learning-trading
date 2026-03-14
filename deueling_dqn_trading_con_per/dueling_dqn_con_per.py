@@ -116,6 +116,11 @@ class AI_Trader_per():
         self.avg_win_history = []
         self.avg_loss_history = []
 
+        # Contadores de acciones random vs modelo
+        self.random_action_count  = 0
+        self.model_action_count   = 0
+        self.last_action_was_random = False
+
         # Hiperparámetros PER
         self.alpha = alpha
         self.beta_start = beta_start
@@ -318,16 +323,21 @@ class AI_Trader_per():
             
     def trade(self, state):
         if np.random.random() <= self.epsilon:
+            self.random_action_count += 1
+            self.last_action_was_random = True
             return random.randrange(self.action_space)
+
+        self.model_action_count += 1
+        self.last_action_was_random = False
 
         if self.has_noise:
             self.model.reset_noise()
-        
+
         if isinstance(state, np.ndarray):
             state = torch.FloatTensor(state).to(self.device)
         if state.dim() == 1:
             state = state.unsqueeze(0)
-            
+
         with torch.no_grad():
             actions = self.model(state)
             return torch.argmax(actions[0]).cpu().numpy()
