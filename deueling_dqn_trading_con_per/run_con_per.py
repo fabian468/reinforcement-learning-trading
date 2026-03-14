@@ -337,9 +337,8 @@ def main():
         trader.avg_loss_history = []
         trader.step_counter = 0
 
-        trader.memory.clear()
-        trader.epsilon = 0.5
-        
+        # No se borra la memoria ni se resetea epsilon entre folds
+        # para que el agente acumule experiencia y explote lo aprendido
         reward_system = AdvancedRewardSystem(initial_balance=balance_first)
 
         # Comienza los episodios
