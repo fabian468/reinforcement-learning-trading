@@ -244,6 +244,11 @@ class ConfigBackend:
     # TensorBoard: True = activo, False = desactivado (para entrenar en la nube)
     TENSORBOARD = True
 
+    # Gráfico en vivo de compras/ventas: True = activo, False = desactivado
+    LIVE_PLOT = True
+    LIVE_PLOT_WINDOW = 150   # cuántos pasos de precio mostrar
+    LIVE_PLOT_UPDATE = 100   # actualizar cada N pasos
+
 
 # ==============================================================================
 # 10. MÉTRICAS Y LOGGING

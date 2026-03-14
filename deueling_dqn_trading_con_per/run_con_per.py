@@ -49,6 +49,7 @@ from plot_stadist import plot_trading_session
 
 from indicadores import  add_ema200_distance
 from tensorboard_logger import TBLogger
+from live_plot import LivePlot
 
 DROPBOX_ACCESS_TOKEN = os.getenv("ACCESS_TOKEN_DROPBOX")
 
@@ -180,6 +181,12 @@ def main():
 
     # TensorBoard
     logger = TBLogger() if ConfigBackend.TENSORBOARD else None
+
+    # Gráfico en vivo
+    live = LivePlot(
+        window_prices=ConfigBackend.LIVE_PLOT_WINDOW,
+        update_every=ConfigBackend.LIVE_PLOT_UPDATE
+    ) if ConfigBackend.LIVE_PLOT else None
 
     symbol = ConfigEntorno.SYMBOL
     intervalo = ConfigEntorno.INTERVALO
@@ -338,6 +345,8 @@ def main():
         # Comienza los episodios
         for episode in range(1, episodes + 1):
             print(f"Episodio: {episode}/{episodes}")
+            if live:
+                live.reset_episode(fold + 1, episode)
             
             #reward_system.weights = reward_system.get_adaptive_weights(episode)
             # Crea las estadísticas del episodio
@@ -616,6 +625,10 @@ def main():
                 trader.remember(state, action, reward, next_state, done)
                 state = next_state
                 profit_dollars = 0
+
+                if live:
+                    live.update(t, current_price, current_equity, action,
+                                trader.inventory, trader.inventory_sell)
 
                 if len(trader.memory) > batch_size and t % 5 == 0:
                     for _ in range(3):
@@ -981,6 +994,9 @@ def main():
 
     if logger:
         logger.close()
+
+    if live:
+        live.close()
 
 def run_main():
     main()
