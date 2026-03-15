@@ -207,9 +207,9 @@ class AI_Trader_per():
             s = random.uniform(a, b)
             idx, p, data = self.memory.get_leaf(s)
             tree_idx[i] = idx
-            batch_data.append(data) # data es la tupla (s, a, r, ns, d)
+            batch_data.append(data)
             priorities[i] = p
-    
+
         # Desempaquetar el batch de manera vectorizada
         states_list, actions_list, rewards_list, next_states_list, dones_list = zip(*batch_data)
     
@@ -258,7 +258,7 @@ class AI_Trader_per():
             loss = F.mse_loss(current_q_values_for_actions, q_targets, reduction='none')
             weighted_loss = (loss * weights).mean()
 
-        # Actualizar prioridades en memoria (vectorizado)
+        # Actualizar prioridades en memoria
         new_priorities = self._get_priority(errors)
         for i in range(batch_size):
             self.memory.update(tree_idx[i], new_priorities[i])
@@ -466,18 +466,22 @@ class AI_Trader_per():
             print(f"Error al cargar modelo: {e}")
             print("Manteniendo valores por defecto.")
 
-    def plot_training_metrics(self, fold ,  save_path='resultados_cv'):
-        min_length = min(len(self.profit_history), len(self.rewards_history), 
-                        len(self.epsilon_history), len(self.trades_history), 
-                        len(self.loss_history), len(self.drawdown_history), 
-                        len(self.sharpe_ratios), len(self.accuracy_history), 
-                        len(self.avg_win_history), len(self.avg_loss_history),
-                        len(self.lr_history))
+    def plot_training_metrics(self, fold, save_path='resultados_cv'):
+        # Solo incluir las historias que se grafican realmente
+        min_length = min(len(self.profit_history), len(self.rewards_history),
+                        len(self.epsilon_history), len(self.loss_history),
+                        len(self.drawdown_history), len(self.sharpe_ratios),
+                        len(self.accuracy_history), len(self.lr_history),
+                        len(self.rewards_history_episode))
+
+        if min_length == 0:
+            print(f"[plot] Sin datos suficientes para graficar fold {fold}")
+            return
 
         episodes = range(1, min_length + 1)
 
-        fig, axs = plt.subplots(5, 2, figsize=(15, 20))  # 5 filas, 2 columnas
-        fig.suptitle('Métricas de Entrenamiento', fontsize=16)
+        fig, axs = plt.subplots(5, 2, figsize=(15, 20))
+        fig.suptitle(f'Métricas de Entrenamiento — Fold {fold}', fontsize=16)
 
         axs[0, 0].plot(episodes, self.profit_history[:min_length], label='Beneficio Total', color='blue')
         axs[0, 0].axhline(y=0, color='red', linestyle='--', linewidth=1)  # Línea horizontal en y=0
@@ -546,8 +550,8 @@ class AI_Trader_per():
         axs[4, 1].legend()
 
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-        plt.savefig(os.path.join(save_path, f'training_metrics_fold_{fold}.png'), dpi=300, bbox_inches='tight')
-        plt.show()
+        plt.savefig(os.path.join(save_path, f'training_metrics_fold_{fold}.png'), dpi=150, bbox_inches='tight')
+        plt.close(fig)
         
     def print_scheduler_info(self):
         """Imprime información sobre el scheduler configurado"""

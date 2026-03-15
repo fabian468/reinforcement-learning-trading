@@ -1,20 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-Created on Wed May 21 23:36:44 2025
-
-@author: fabia
+SumTree para Prioritized Experience Replay (PER).
 """
 
 import numpy as np
 
 
-class SumTree(object):
-    
+class SumTree:
+
     def __init__(self, capacity):
         self.capacity = capacity
         self.tree = np.zeros(2 * capacity - 1)
         self.data = np.zeros(capacity, dtype=object)
-        self.n_entries = 0 # Nuevo atributo para rastrear el número de entradas
+        self.n_entries = 0
         self.data_ptr = 0
 
     def add(self, priority, data):
@@ -40,12 +38,11 @@ class SumTree(object):
             if left_child_index >= len(self.tree):
                 leaf_index = parent_index
                 break
+            if v <= self.tree[left_child_index]:
+                parent_index = left_child_index
             else:
-                if v <= self.tree[left_child_index]:
-                    parent_index = left_child_index
-                else:
-                    v -= self.tree[left_child_index]
-                    parent_index = right_child_index
+                v -= self.tree[left_child_index]
+                parent_index = right_child_index
         data_index = leaf_index - self.capacity + 1
         return leaf_index, self.tree[leaf_index], self.data[data_index]
 
@@ -55,18 +52,10 @@ class SumTree(object):
 
     @property
     def max_priority(self):
-        """Retorna la prioridad máxima de las hojas almacenadas."""
         if self.n_entries == 0:
             return 1.0
-        max_p = self.tree[self.capacity - 1:].max()
-        return max_p if max_p > 0 else 1.0
-
-    def clear(self):
-        self.tree[:] = 0
-        self.data[:] = 0
-        self.data_ptr = 0
-        self.n_entries = 0
+        max_p = self.tree[self.capacity - 1: self.capacity - 1 + self.n_entries].max()
+        return float(max_p) if max_p > 0 else 1.0
 
     def __len__(self):
         return self.n_entries
-

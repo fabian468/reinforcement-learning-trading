@@ -25,9 +25,10 @@ class ConfigEntorno:
     ES_FOREX = False
     ES_METAL = True
 
-    # Valor del pip y multiplicador (para XAUUSD/GOLD: tick_value=5, pip_multiplier=10000)
-    TICK_VALUE = 5          # Valor monetario de 1 pip
-    PIP_MULTIPLIER = 10000  # Pips decimales (10000 para XAUUSD = 0.01)
+    # Valor del pip y multiplicador (para XAUUSD/GOLD: 1 lote estándar = 100 oz)
+    # pip_value en código = 100 * lot_size → para 0.01 lots = 1.0 $/unidad de precio
+    TICK_VALUE = 100        # Multiplicador correcto: 100 oz por lote estándar
+    PIP_MULTIPLIER = 100    # 1 pip XAUUSD = $0.01 de precio
 
     # Tamaño de ventana para crear estados
     WINDOW_SIZE = 18
@@ -50,15 +51,17 @@ class ConfigTrading:
     """Parámetros de gestión de capital y costos"""
 
     # Balance inicial
-    BALANCE_INICIAL = 100
+    BALANCE_INICIAL = 1000
 
     # Tamaño de lote (lots)
     LOT_SIZE = 0.01
 
     # Comisión por operación (en dólares)
-    COMMISSION_PER_TRADE = 4.5
+    # XM Ultra Low: sin comisión, costo integrado en spread del CSV
+    COMMISSION_PER_TRADE = 0.0
 
     # Spread (usado para cálculos internos)
+    # El spread real viene del CSV (datos MT5); este valor es solo fallback
     SPREAD = 0.20
 
     # Valor del pip en USD (10 * lot_size para XAUUSD)
@@ -185,10 +188,10 @@ class ConfigEntrenamiento:
     """Parámetros del proceso de entrenamiento"""
 
     # Número de episodios por fold
-    EPISODES = 5
+    EPISODES = 25
 
     # Número de folds para validación cruzada
-    N_FOLDS = 2
+    N_FOLDS = 3
 
     # Batch size para entrenamiento
     BATCH_SIZE = 256
@@ -219,7 +222,8 @@ class ConfigModelo:
     MODELO_EXISTENTE = "resultados_cv/model_XAUUSD_H1_2015_01_01_2024_05_31.csv"
 
     # ¿Cargar memoria previa?
-    CARGAR_MEMORIA_BUFFER = True
+    # IMPORTANTE: poner False si se cambiaron parámetros que afectan la escala del reward/P&L
+    CARGAR_MEMORIA_BUFFER = False  # Cambio de balance invalida memoria anterior
 
 
 # ==============================================================================

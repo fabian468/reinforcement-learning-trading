@@ -222,13 +222,16 @@ def main():
     commission_per_trade = ConfigTrading.COMMISSION_PER_TRADE
     test_size_ratio = ConfigEntorno.TEST_SIZE_RATIO
 
-    pip_value_eur_usd = 10 * lot_size
+    # XAUUSD: 1 lote estándar = 100 oz, pip = $0.01/oz
+    # Para 0.01 lots (1 oz): profit = price_diff * 100 * lot_size = price_diff * 1.0
+    pip_value_eur_usd = 100 * lot_size
 
     # Creación de carpeta para guardar los resultados
     resultados_dir = ConfigModelo.DIRECTORIO_RESULTADOS
     os.makedirs(resultados_dir, exist_ok=True)
-    
+
     reward_system = AdvancedRewardSystem(initial_balance=balance_first)
+    reward_system.weights = ConfigReward.get_pesos()  # Sincronizar pesos desde parametros.py
 
     data = dataset_loader_csv(nombre_csv)
         
@@ -236,6 +239,10 @@ def main():
     train_size = int(len(data) * (1 - test_size_ratio))
     train_data = data.iloc[:train_size].copy()
     test_data = data.iloc[train_size:].copy()
+
+    # Scaler global ajustado sobre todos los datos de entrenamiento (para normalizar el test)
+    global_scaler = StandardScaler()
+    global_scaler.fit(train_data[['open', 'high', 'low', 'close', 'tick_volume']].values)
     
     if 'time' in data.columns and data['time'].notnull().all():
         hora = data['time']
@@ -340,6 +347,7 @@ def main():
         # No se borra la memoria ni se resetea epsilon entre folds
         # para que el agente acumule experiencia y explote lo aprendido
         reward_system = AdvancedRewardSystem(initial_balance=balance_first)
+        reward_system.weights = ConfigReward.get_pesos()  # Sincronizar pesos desde parametros.py
 
         # Comienza los episodios
         for episode in range(1, episodes + 1):
@@ -800,9 +808,9 @@ def main():
         print("Generando estados para el conjunto de prueba...")
         _hora_int_test = hora_int_test_pre if hora_int_test_pre is not None else np.zeros(len(test_data), dtype=np.int32)
         if ConfigEntorno.TIPO_ESTADO == 'advanced':
-            test_states = create_all_states_advanced(test_data, window_size, scaler, _hora_int_test)
+            test_states = create_all_states_advanced(test_data, window_size, global_scaler, _hora_int_test)
         else:
-            test_states = create_all_states_ohcl(test_data, window_size, scaler, _hora_int_test)
+            test_states = create_all_states_ohcl(test_data, window_size, global_scaler, _hora_int_test)
         print(f"Estados de prueba generados: {len(test_states)} - Tipo: {ConfigEntorno.TIPO_ESTADO}")
 
         # Modo evaluación: sin dropout, sin exploración aleatoria
@@ -840,8 +848,8 @@ def main():
             spread_test = test_spreads[t]
             timestamp_test = test_timestamps[t]
 
-            current_buy_exec_price_test = current_price_test + (spread_test * 0.5)
-            current_sell_exec_price_test = current_price_test - (spread_test * 0.5)
+            current_buy_exec_price_test = current_price_test + (spread_test * lot_size * 0.5)
+            current_sell_exec_price_test = current_price_test - (spread_test * lot_size * 0.5)
 
             if len(test_inventory) > 0 and current_low_test < best_low_test:
                 best_low_test = current_low_test

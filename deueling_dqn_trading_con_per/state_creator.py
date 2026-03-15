@@ -256,7 +256,7 @@ def create_all_states_advanced(data, window_size, scaler, hora_int):
     # 3. MACD (3 features: MACD line, Signal line, Histogram)
     # =========================================================================
     try:
-        macd_line, signal_line = macd(data, fast=12, slow=26, signal=9)
+        macd_line, signal_line = macd(data, fast_period=12, slow_period=26, signal_period=9)
         macd_line = macd_line.fillna(0).values
         signal_line = signal_line.fillna(0).values
         histogram = macd_line - signal_line
