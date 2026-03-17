@@ -14,7 +14,7 @@ class ConfigEntorno:
     """Parámetros relacionados con los datos y el mercado"""
 
     # Nombre del archivo CSV con datos históricos
-    NOMBRE_CSV = "XAUUSD_H1_2015_01_01_2024_05_31.csv"
+    NOMBRE_CSV = "GOLD#_M15_202112200200_202412311530.csv"
 
     # Símbolo y temporalidad
     SYMBOL = "GOLD"
@@ -85,8 +85,8 @@ class ConfigAgente:
 
     # Exploración con Noisy Networks (epsilon para backward compatibility)
     EPSILON_INICIO = 1.0
-    EPSILON_FINAL = 0.15
-    EPSILON_DECAY = 0.995   # Factor de decaimiento por episodio
+    EPSILON_FINAL = 0.05
+    EPSILON_DECAY = 0.985   # Factor de decaimiento por episodio 0.995
 
     # Double DQN
     USE_DOUBLE_DQN = True
@@ -188,10 +188,10 @@ class ConfigEntrenamiento:
     """Parámetros del proceso de entrenamiento"""
 
     # Número de episodios por fold
-    EPISODES = 25
+    EPISODES = 50
 
     # Número de folds para validación cruzada
-    N_FOLDS = 3
+    N_FOLDS = 4
 
     # Batch size para entrenamiento
     BATCH_SIZE = 256
@@ -201,7 +201,7 @@ class ConfigEntrenamiento:
     TRAIN_ITERATIONS = 3    # Iteraciones por step
 
     # Guardar modelo cada cuántos episodios
-    GUARDAR_MODELO_CADA = 5
+    GUARDAR_MODELO_CADA = 10
 
 
 # ==============================================================================
