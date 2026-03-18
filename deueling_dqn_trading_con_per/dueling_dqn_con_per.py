@@ -438,24 +438,13 @@ class AI_Trader_per():
                                 self.beta_frames = int(value)
                             elif key == "epsilon_priority":
                                 self.epsilon_priority = float(value)
-                            elif key == "scheduler_type":
-                                self.scheduler_type = value
-                            elif key == "lr_decay_rate":
-                                self.lr_decay_rate = float(value)
-                            elif key == "lr_decay_steps":
-                                self.lr_decay_steps = int(value)
-                            elif key == "lr_min":
-                                self.lr_min = float(value)
+                            # scheduler_type, lr_decay_rate, lr_decay_steps, lr_min,
+                            # patience, factor, cosine_restarts se toman de parametros.py
+                            # (configuración del entrenamiento actual), no del checkpoint.
                             elif key == "initial_learning_rate":
                                 self.initial_learning_rate = float(value)
                             elif key == "current_learning_rate":
                                 self.learning_rate = float(value)
-                            elif key == "patience":
-                                self.patience = int(value)
-                            elif key == "factor":
-                                self.factor = float(value)
-                            elif key == "cosine_restarts":
-                                self.cosine_restarts = value.lower() == "true"
                                 
                 # Recrear scheduler después de cargar parámetros, luego restaurar su estado
                 self.scheduler = self._create_scheduler()
