@@ -38,18 +38,14 @@ from numba import jit
 # ══════════════════════════════════════════════════════════════════════════════
 
 def rsi(data, period=14):
-    """RSI usando el método de Wilder."""
+    """RSI usando el método de Wilder vectorizado (ewm con alpha=1/period)."""
     if len(data) < period + 1:
         return pd.Series([50] * len(data), index=data.index)
     delta = data['close'].diff(1)
-    up   = delta.where(delta > 0, 0)
-    down = -delta.where(delta < 0, 0)
-    avg_up   = up.rolling(window=period, min_periods=1).mean()
-    avg_down = down.rolling(window=period, min_periods=1).mean()
-    for i in range(period, len(data)):
-        if i >= period and not pd.isna(avg_up.iloc[i - 1]):
-            avg_up.iloc[i]   = (avg_up.iloc[i - 1]   * (period - 1) + up.iloc[i])   / period
-            avg_down.iloc[i] = (avg_down.iloc[i - 1] * (period - 1) + down.iloc[i]) / period
+    up   = delta.where(delta > 0, 0.0)
+    down = -delta.where(delta < 0, 0.0)
+    avg_up   = up.ewm(alpha=1.0 / period, adjust=False).mean()
+    avg_down = down.ewm(alpha=1.0 / period, adjust=False).mean()
     rs = avg_up / avg_down.replace(0, np.nan)
     rsi_values = 100 - (100 / (1 + rs))
     rsi_values = np.where(avg_down == 0, 100, rsi_values)

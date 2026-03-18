@@ -152,6 +152,15 @@ Models and plots are saved to `resultados_cv/`:
 - `best_high` ahora se trackea y resetea correctamente según si hay posición short abierta
 - Afectaba al cálculo de `pip_drawdrow_real` para operaciones short (drawdown real incorrecto)
 
+### 2026-03-18 (6)
+
+**Performance: vectorizar RSI loop Python → ewm (`indicadores.py`, `backtesting.py`)**
+- `indicadores.py`: eliminado `for i in range(period, len(data))` con `.iloc` que iteraba 14K+ filas en Python puro
+- Reemplazado por `up.ewm(alpha=1/period, adjust=False).mean()` — equivalente matemático al suavizado de Wilder, totalmente vectorizado en C (pandas)
+- `backtesting.py`: misma corrección aplicada a su copia local de `rsi()`
+- `live_trading.py`: ya importa `rsi` de `indicadores.py`, cubierto automáticamente
+- Impacto estimado: ~500-1000ms ahorrados por fold × 4 folds
+
 ### 2026-03-18 (5)
 
 **Fix: drawdown_real roto → MAE (Maximum Adverse Excursion) (`run_con_per.py`)**

@@ -8,34 +8,23 @@ import pandas as pd
 import numpy as np
 
 def rsi(data, period=14):
-    """RSI usando el método de Wilder (más preciso)"""
+    """RSI usando el método de Wilder vectorizado (ewm con alpha=1/period)."""
     if len(data) < period + 1:
         return pd.Series([50] * len(data), index=data.index)
-    
+
     delta = data['close'].diff(1)
-    up = delta.where(delta > 0, 0)
-    down = -delta.where(delta < 0, 0)
-    
-    # Calcular la primera media simple (permitir menos datos iniciales)
-    avg_up = up.rolling(window=period, min_periods=1).mean()
-    avg_down = down.rolling(window=period, min_periods=1).mean()
-    
-    # Aplicar el suavizado de Wilder desde el período en adelante
-    for i in range(period, len(data)):
-        if i >= period and not pd.isna(avg_up.iloc[i-1]):
-            avg_up.iloc[i] = (avg_up.iloc[i-1] * (period-1) + up.iloc[i]) / period
-            avg_down.iloc[i] = (avg_down.iloc[i-1] * (period-1) + down.iloc[i]) / period
-    
-    # Calcular RSI (evitar división por cero)
+    up   = delta.where(delta > 0, 0.0)
+    down = -delta.where(delta < 0, 0.0)
+
+    avg_up   = up.ewm(alpha=1.0 / period, adjust=False).mean()
+    avg_down = down.ewm(alpha=1.0 / period, adjust=False).mean()
+
     rs = avg_up / avg_down.replace(0, np.nan)
     rsi_values = 100 - (100 / (1 + rs))
-    
-    # Manejar casos especiales
     rsi_values = np.where(avg_down == 0, 100, rsi_values)
-    rsi_values = np.where(avg_up == 0, 0, rsi_values)
-    
-    rsi_series = pd.Series(rsi_values, index=data.index)
-    return rsi_series.fillna(50)
+    rsi_values = np.where(avg_up   == 0,   0, rsi_values)
+
+    return pd.Series(rsi_values, index=data.index).fillna(50)
 
 
 def macd(data, fast_period=12, slow_period=26, signal_period=9):
