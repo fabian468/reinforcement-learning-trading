@@ -198,6 +198,8 @@ def main():
     episodes = ConfigEntrenamiento.EPISODES
     n_folds = ConfigEntrenamiento.N_FOLDS
     batch_size = ConfigEntrenamiento.BATCH_SIZE
+    train_frequency = ConfigEntrenamiento.TRAIN_FREQUENCY
+    train_iterations = ConfigEntrenamiento.TRAIN_ITERATIONS
 
     # Agente
     epsilon_decay = ConfigAgente.EPSILON_DECAY
@@ -643,8 +645,8 @@ def main():
                         is_random=trader.last_action_was_random,
                     )
 
-                if len(trader.memory) > batch_size and t % 5 == 0:
-                    for _ in range(3):
+                if len(trader.memory) > batch_size and t % train_frequency == 0:
+                    for _ in range(train_iterations):
                         current_loss = trader.batch_train(batch_size)
 
                     if logger:
