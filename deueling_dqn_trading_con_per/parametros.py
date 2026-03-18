@@ -127,7 +127,7 @@ class ConfigScheduler:
     """Parámetros del scheduler de learning rate"""
 
     # Tipos disponibles: 'exponential_decay', 'cosine_decay', 'polynomial_decay', 'reduce_on_plateau', 'constant'
-    SCHEDULER_TYPE = 'cosine_decay'
+    SCHEDULER_TYPE = 'reduce_on_plateau'
 
     # Parámetros para exponential_decay
     LR_DECAY_RATE = 0.97     # LR se multiplica por este factor cada LR_DECAY_STEPS
@@ -137,11 +137,11 @@ class ConfigScheduler:
     LR_MIN = 1e-5
 
     # Parámetros para reduce_on_plateau
-    PATIENCE = 10            # Épocas sin mejora antes de reducir LR
+    PATIENCE = 15            # Episodios sin mejora antes de reducir LR
     FACTOR = 0.5             # Factor de reducción (nueva_lr = lr * factor)
 
     # Parámetros para cosine_decay
-    COSINE_RESTARTS = True   # Si True, usa CosineAnnealingWarmRestarts
+    COSINE_RESTARTS = False  # Si True, usa CosineAnnealingWarmRestarts
 
 
 # ==============================================================================
@@ -158,7 +158,7 @@ class ConfigReward:
     PESO_CONSISTENCY = 0.2   # Incentiva estabilidad en los retornos
     PESO_RISK_ADJUSTED = 0.3 # Incentiva buen ratio retorno/riesgo
     PESO_MOMENTUM = 0.15     # Incentiva seguir tendencias
-    PESO_TRADE_QUALITY = 0.25 # Recompensa por buenas operaciones
+    PESO_TRADE_QUALITY = 0.03 # Recompensa por buenas operaciones — reducido por saturación del tanh (ver CLAUDE.md)
 
     # Tasa libre de riesgo (anual) - se convierte a diaria internamente
     RISK_FREE_RATE = 0.02
@@ -197,7 +197,7 @@ class ConfigEntrenamiento:
     BATCH_SIZE = 256
 
     # Frecuencia de entrenamiento (cada cuántos steps entrenar)
-    TRAIN_FREQUENCY = 5     # Entrenar cada 5 steps
+    TRAIN_FREQUENCY = 20     # Entrenar cada 5 steps
     TRAIN_ITERATIONS = 3    # Iteraciones por step
 
     # Guardar modelo cada cuántos episodios
@@ -218,8 +218,8 @@ class ConfigModelo:
     DIRECTORIO_RESULTADOS = 'resultados_cv'
 
     # ¿Cargar modelo existente?
-    CARGAR_MODELO = False
-    MODELO_EXISTENTE = "resultados_cv/model_XAUUSD_H1_2015_01_01_2024_05_31.csv"
+    CARGAR_MODELO = True
+    MODELO_EXISTENTE = "resultados_cv/model_GOLD#_M15_202112200200_202412311530.csv"
 
     # ¿Cargar memoria previa?
     # IMPORTANTE: poner False si se cambiaron parámetros que afectan la escala del reward/P&L
@@ -235,9 +235,6 @@ class ConfigBackend:
 
     # Guardar estadísticas en backend
     GUARDAR_ESTADISTICAS_EN_BACKEND = True
-
-    # Subir a Dropbox
-    GUARDAR_EN_DROPBOX = False
 
     # URL del backend
     URL_BACKEND = 'https://back-para-entrenamiento.onrender.com/api/upload'
@@ -296,20 +293,31 @@ def get_state_size():
 def get_config_trader():
     """Retorna diccionario con todos los parámetros para AI_Trader_per"""
     return {
+        # Exploración
+        'epsilon': ConfigAgente.EPSILON_INICIO,
+        'epsilon_final': ConfigAgente.EPSILON_FINAL,
         'epsilon_decay': ConfigAgente.EPSILON_DECAY,
-        'commission_per_trade': ConfigTrading.COMMISSION_PER_TRADE,
+        # Agente
         'gamma': ConfigAgente.GAMMA,
+        'use_double_dqn': ConfigAgente.USE_DOUBLE_DQN,
         'target_model_update': ConfigAgente.TARGET_MODEL_UPDATE,
+        'learning_rate': ConfigAgente.LEARNING_RATE,
+        # Trading
+        'commission_per_trade': ConfigTrading.COMMISSION_PER_TRADE,
+        # Memoria PER
         'memory_size': ConfigMemoria.MEMORY_SIZE,
         'alpha': ConfigMemoria.ALPHA,
         'beta_start': ConfigMemoria.BETA_START,
         'beta_frames': ConfigMemoria.BETA_FRAMES,
         'epsilon_priority': ConfigMemoria.EPSILON_PRIORITY,
+        # Scheduler
         'scheduler_type': ConfigScheduler.SCHEDULER_TYPE,
-        'learning_rate': ConfigAgente.LEARNING_RATE,
+        'cosine_restarts': ConfigScheduler.COSINE_RESTARTS,
         'lr_decay_rate': ConfigScheduler.LR_DECAY_RATE,
         'lr_decay_steps': ConfigScheduler.LR_DECAY_STEPS,
         'lr_min': ConfigScheduler.LR_MIN,
+        'patience': ConfigScheduler.PATIENCE,
+        'factor': ConfigScheduler.FACTOR,
     }
 
 
