@@ -8,8 +8,6 @@ import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 import os
-import dropbox
-
 from notificador import enviar_alerta
 
 from sklearn.preprocessing import StandardScaler
@@ -40,7 +38,7 @@ from parametros import (
 
 from dueling_dqn_con_per import AI_Trader_per
 from state_creator import (
-    state_creator_vectorized, state_creator_ohcl_vectorized,
+    state_creator_ohcl_vectorized,
     create_all_states_ohcl, create_all_states_advanced
 )
 from AdvancedRewardSystem import AdvancedRewardSystem , calculate_advanced_reward
@@ -50,10 +48,6 @@ from plot_stadist import plot_trading_session
 from indicadores import  add_ema200_distance
 from tensorboard_logger import TBLogger
 from live_plot import LivePlot
-
-DROPBOX_ACCESS_TOKEN = os.getenv("ACCESS_TOKEN_DROPBOX")
-
-dbx = dropbox.Dropbox(DROPBOX_ACCESS_TOKEN)
 
 def price_format(n):
     n = float(n)
@@ -176,7 +170,6 @@ def main():
     cargar_memoria_buffer = ConfigModelo.CARGAR_MEMORIA_BUFFER
 
     guardar_estadisticas_en_backend = ConfigBackend.GUARDAR_ESTADISTICAS_EN_BACKEND
-    guardar_en_dropbox = ConfigBackend.GUARDAR_EN_DROPBOX
     mostrar_prints = ConfigBackend.MOSTRAR_PRINTS
 
     # TensorBoard
@@ -230,7 +223,7 @@ def main():
     resultados_dir = ConfigModelo.DIRECTORIO_RESULTADOS
     os.makedirs(resultados_dir, exist_ok=True)
 
-    reward_system = AdvancedRewardSystem(initial_balance=balance_first)
+    reward_system = AdvancedRewardSystem(initial_balance=balance_first, weights=ConfigReward.get_pesos())
     reward_system.weights = ConfigReward.get_pesos()  # Sincronizar pesos desde parametros.py
 
     data = dataset_loader_csv(nombre_csv)
@@ -346,7 +339,7 @@ def main():
 
         # No se borra la memoria ni se resetea epsilon entre folds
         # para que el agente acumule experiencia y explote lo aprendido
-        reward_system = AdvancedRewardSystem(initial_balance=balance_first)
+        reward_system = AdvancedRewardSystem(initial_balance=balance_first, weights=ConfigReward.get_pesos())
         reward_system.weights = ConfigReward.get_pesos()  # Sincronizar pesos desde parametros.py
 
         # Comienza los episodios
@@ -379,6 +372,7 @@ def main():
             buy_points = []
             sell_points = []
             current_loss = 0
+            force_closes = 0
             best_low =9999999
             best_high = 0
             
@@ -427,9 +421,9 @@ def main():
                 elif len(trader.inventory) <= 0:
                     best_low = 9999999
                     
-                if len(trader.inventory) > 0 and best_high < current_high:
+                if len(trader.inventory_sell) > 0 and best_high < current_high:
                     best_high = current_high
-                elif len(trader.inventory) <= 0:
+                elif len(trader.inventory_sell) <= 0:
                     best_high = 0
            
                 # Si la accion de la ia es igua a 1 compra
@@ -475,7 +469,9 @@ def main():
                     
                     reward, _ = calculate_advanced_reward(
                         reward_system, profit_dollars, current_equity, peak_equity,
-                        episode_returns_pips, is_trade_closed=True, add_noise=False
+                        episode_returns_pips, is_trade_closed=True, add_noise=False,
+                        episode_wins=wins + (1 if profit_pips > 0 else 0),
+                        episode_losses=losses + (1 if profit_pips <= 0 else 0)
                     )
 
                     if profit_pips > 0:
@@ -530,7 +526,9 @@ def main():
 
                     reward, _ = calculate_advanced_reward(
                         reward_system, profit_dollars, current_equity, peak_equity,
-                        episode_returns_pips, is_trade_closed=True, add_noise=False
+                        episode_returns_pips, is_trade_closed=True, add_noise=False,
+                        episode_wins=wins + (1 if profit_pips > 0 else 0),
+                        episode_losses=losses + (1 if profit_pips <= 0 else 0)
                     )
 
                     if profit_pips > 0:
@@ -587,10 +585,13 @@ def main():
                     
                     reward, reward_components = calculate_advanced_reward(
                         reward_system, profit_dollars, current_equity, peak_equity,
-                        episode_returns_pips, is_trade_closed=True, add_noise=False
+                        episode_returns_pips, is_trade_closed=True, add_noise=False,
+                        episode_wins=wins + (1 if profit_pips > 0 else 0),
+                        episode_losses=losses + (1 if profit_pips <= 0 else 0)
                     )
                     # Penalización por cierre forzado: el agente no decidió cerrar
                     reward -= 0.02
+                    force_closes += 1
 
                     if profit_pips > 0:
                         wins += 1
@@ -676,26 +677,48 @@ def main():
             
             # MOSTRAR RESULTADOS MENOS FRECUENTEMENTE
             # Solo cada 10 episodios o el último
+            expectancy = (accuracy * avg_win) + ((1 - accuracy) * avg_loss) if trades_count > 0 else 0
+            profit_factor = abs(avg_win / avg_loss) if avg_loss != 0 else float('inf')
             print(f"""
-    Episodio {episode}: 
-    Beneficio (pips)={total_profit_pips:.2f}
-    Beneficio (usd)={price_format(profit_dollars_total)}
-    Trades={trades_count}
-    Wins={wins}
-    Sharpe={sharpe:.2f}
-    Drawdown={max_drawdown:.2%}
-    Accuracy={accuracy:.2%}
-    Equity={current_equity:.2f}
-    Recompensa del profi :{ reward_system.sumaRecompensaProfit} 
-    Recompensa del sharpe: {reward_system.sumaRecompensaSharpe}
-    Recompensa del drawndown: {reward_system.sumaRecompensaDrawndown}
-    Recompensa del la consistencia: {reward_system.sumaRecompensaConsistency}
-    Recompensa del riesgo ajustado: {reward_system.sumaRecompensaRiskAdjusted }
-    Recompensa del momenutum: { reward_system.sumaRecompensaMomentum} 
-    Recompensa de la calidad del trade: {reward_system.sumaRecompensaTradeQuality}
-    Recompensa Total del episodio: {reward_episode:.2f}
-    
-    Recompensa total: {trader.total_rewards:.2f}
+{'='*60}
+  EPISODIO {episode}/{episodes}  |  FOLD {fold+1}/{n_folds}
+{'='*60}
+  [P&L]
+    Beneficio pips  : {total_profit_pips:+.2f}
+    Beneficio USD   : {price_format(profit_dollars_total)}
+    Equity actual   : {current_equity:.2f}
+
+  [TRADES]
+    Total           : {trades_count}   |  Wins: {wins}   Losses: {losses}
+    Accuracy        : {accuracy:.2%}
+    Avg Win (pips)  : {avg_win:+.2f}
+    Avg Loss (pips) : {avg_loss:+.2f}
+    Profit Factor   : {profit_factor:.2f}
+    Expectancy      : {expectancy:+.2f} pips/trade
+    Force Closes    : {force_closes}  (cierres forzados hora 23)
+
+  [RIESGO]
+    Drawdown        : {max_drawdown:.2%}
+    Drawdown real   : {max_drawdown_real:.2%}
+    Sharpe          : {sharpe:.3f}
+
+  [AGENTE]
+    Epsilon         : {trader.epsilon:.4f}
+    LR actual       : {trader.learning_rate:.6f}
+    Loss (TD error) : {current_loss:.4f}
+
+  [REWARD BREAKDOWN]
+    Profit          : {reward_system.sumaRecompensaProfit:+.2f}
+    Sharpe          : {reward_system.sumaRecompensaSharpe:+.2f}
+    Drawdown        : {reward_system.sumaRecompensaDrawndown:+.2f}
+    Consistencia    : {reward_system.sumaRecompensaConsistency:+.2f}
+    Riesgo ajustado : {reward_system.sumaRecompensaRiskAdjusted:+.2f}
+    Momentum        : {reward_system.sumaRecompensaMomentum:+.2f}
+    Trade Quality   : {reward_system.sumaRecompensaTradeQuality:+.2f}
+    ─────────────────────────────
+    Episodio        : {reward_episode:+.2f}
+    Acumulado       : {trader.total_rewards:+.2f}
+{'='*60}
                 """)
             
             # Decay de epsilon una vez por episodio
@@ -742,19 +765,6 @@ def main():
                         hit_frequency=accuracy
                     )
                 
-                if guardar_en_dropbox:
-                    local_file_path =[
-                        f'resultados_cv/{nombre_modelo_guardado}.h5',
-                        f'resultados_cv/{nombre_modelo_guardado}_params.txt',
-                        f'resultados_cv/{nombre_modelo_guardado}_target.h5',
-                        "resultados_cv/training_metrics.png"
-                    ]
-                    
-                    for file in local_file_path:
-                        dropbox_destination_path = f"/{os.path.basename(file)}"
-                        with open(file, 'rb') as f:
-                            dbx.files_upload(f.read(), dropbox_destination_path, mode=dropbox.files.WriteMode.overwrite)
-
         # Plotting final
         if buy_points or sell_points:
             plot_trading_session(fold_data, buy_points, sell_points, symbol, intervalo, fold, save_path=resultados_dir)
