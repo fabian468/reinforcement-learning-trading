@@ -93,6 +93,7 @@ class AI_Trader_per():
         
         # Historial del learning rate
         self.lr_history = []
+        self.lr_history_episode = []  # Una entrada por episodio (para el plot)
 
         # Crear modelos
         self.model = DuelingDQN(state_size, action_space).to(self.device)
@@ -305,21 +306,23 @@ class AI_Trader_per():
     
     def _update_learning_rate(self, current_loss):
         """Actualiza el learning rate usando los schedulers nativos de PyTorch"""
-        if self.scheduler is None:
+        if self.scheduler is None or self.scheduler_type == 'reduce_on_plateau':
             return
-            
-        if self.scheduler_type == 'reduce_on_plateau':
-            # ReduceLROnPlateau requiere el loss como métrica
-            self.scheduler.step(current_loss)
-        else:
-            # Los demás schedulers se actualizan sin parámetros
-            if self.scheduler_type == 'exponential_decay':
-                # Actualizar cada lr_decay_steps pasos
-                if self.step_counter % self.lr_decay_steps == 0 and self.step_counter > 0:
-                    self.scheduler.step()
-            else:
-                # Para cosine y polynomial, actualizar en cada paso
+
+        if self.scheduler_type == 'exponential_decay':
+            if self.step_counter % self.lr_decay_steps == 0 and self.step_counter > 0:
                 self.scheduler.step()
+        else:
+            # cosine y polynomial: actualizar en cada paso
+            self.scheduler.step()
+
+    def step_episode_scheduler(self, episode_avg_loss):
+        """Llamar al final de cada episodio. Requerido para reduce_on_plateau;
+        para los demás schedulers registra el LR del episodio en lr_history_episode."""
+        if self.scheduler is not None and self.scheduler_type == 'reduce_on_plateau':
+            self.scheduler.step(episode_avg_loss)
+            self.learning_rate = self.optimizer.param_groups[0]['lr']
+        self.lr_history_episode.append(self.learning_rate)
             
     def trade(self, state):
         if np.random.random() <= self.epsilon:
@@ -471,7 +474,7 @@ class AI_Trader_per():
         min_length = min(len(self.profit_history), len(self.rewards_history),
                         len(self.epsilon_history), len(self.loss_history),
                         len(self.drawdown_history), len(self.sharpe_ratios),
-                        len(self.accuracy_history), len(self.lr_history),
+                        len(self.accuracy_history), len(self.lr_history_episode),
                         len(self.rewards_history_episode))
 
         if min_length == 0:
@@ -521,20 +524,20 @@ class AI_Trader_per():
         axs[3, 0].legend()
 
         # Nueva gráfica: Learning Rate
-        axs[3, 1].plot(episodes, self.lr_history[:min_length], label='Learning Rate', color='magenta')
+        axs[3, 1].plot(episodes, self.lr_history_episode[:min_length], label='Learning Rate', color='magenta')
         axs[3, 1].set_ylabel('Learning Rate')
         axs[3, 1].set_xlabel('Episodio')
         axs[3, 1].grid(True)
         axs[3, 1].legend()
-        axs[3, 1].set_yscale('log')  # Escala logarítmica para mejor visualización
+        axs[3, 1].set_yscale('log')
 
         # Gráfica combinada: Loss vs Learning Rate
         axs[4, 0].plot(episodes, self.loss_history[:min_length], label='Loss', color='purple', alpha=0.7)
         axs[4, 0].set_ylabel('Loss', color='purple')
         axs[4, 0].tick_params(axis='y', labelcolor='purple')
-        
+
         ax2 = axs[4, 0].twinx()
-        ax2.plot(episodes, self.lr_history[:min_length], label='Learning Rate', color='magenta', alpha=0.7)
+        ax2.plot(episodes, self.lr_history_episode[:min_length], label='Learning Rate', color='magenta', alpha=0.7)
         ax2.set_ylabel('Learning Rate', color='magenta')
         ax2.tick_params(axis='y', labelcolor='magenta')
         ax2.set_yscale('log')

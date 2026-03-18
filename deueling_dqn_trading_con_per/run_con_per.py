@@ -718,6 +718,9 @@ def main():
             if trader.epsilon > trader.epsilon_final:
                 trader.epsilon *= trader.epsilon_decay
 
+            # Actualizar scheduler por episodio (reduce_on_plateau lo requiere; los demás registran LR)
+            trader.step_episode_scheduler(current_loss)
+
             # Guardar estadísticas
             trader.profit_history.append(profit_dollars_total)
             trader.epsilon_history.append(trader.epsilon)
