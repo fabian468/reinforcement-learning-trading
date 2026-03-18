@@ -152,6 +152,14 @@ Models and plots are saved to `resultados_cv/`:
 - `best_high` ahora se trackea y resetea correctamente según si hay posición short abierta
 - Afectaba al cálculo de `pip_drawdrow_real` para operaciones short (drawdown real incorrecto)
 
+### 2026-03-18 (5)
+
+**Fix: drawdown_real roto → MAE (Maximum Adverse Excursion) (`run_con_per.py`)**
+- `current_drawdown_real` acumulaba `profit_drawdrow_real` de todos los trades, dando valores >100% imposibles (ej: 643%)
+- Eliminadas variables: `current_drawdown_real`, `peak_equity_drawdrown_real`, `drawdown_real_history_episode`, `max_drawdown_real`
+- Reemplazado por `worst_mae_pips` / `worst_mae_usd`: el peor precio no realizado alcanzado en cualquier trade del episodio (MAE real)
+- El print ahora muestra `Peor MAE (pips)` y su equivalente en USD
+
 ### 2026-03-18 (4)
 
 **Mejora print de episodio + contador force_closes (`run_con_per.py`)**

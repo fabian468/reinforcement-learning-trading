@@ -364,10 +364,9 @@ def main():
             losing_profits_pips = []
             peak_equity = balance_first
             current_equity = balance_first
-            current_drawdown_real =balance_first
-            peak_equity_drawdrown_real = balance_first
+            worst_mae_pips = 0.0
+            worst_mae_usd  = 0.0
             drawdown_history_episode = []
-            drawdown_real_history_episode = []
             episode_returns_pips = []
             buy_points = []
             sell_points = []
@@ -453,17 +452,16 @@ def main():
                     total_profit_pips += profit_pips
                     profit_dollars_total += profit_dollars
                     trades_count += 1
-                    current_drawdown_real += profit_drawdrow_real
                     current_equity += profit_dollars
-                    
+                    if pip_drawdrow_real < worst_mae_pips:
+                        worst_mae_pips = pip_drawdrow_real
+                        worst_mae_usd  = profit_drawdrow_real
+
                     if current_equity > peak_equity:
                         peak_equity = current_equity
                     elif current_equity < worse_equity:
                         worse_equity = current_equity
-                    
-                    if current_drawdown_real > peak_equity_drawdrown_real:
-                        peak_equity_drawdrown_real = current_drawdown_real
-    
+
                     episode_returns_pips.append(profit_pips)
                     
                     
@@ -510,16 +508,15 @@ def main():
                     total_profit_pips += profit_pips
                     profit_dollars_total += profit_dollars
                     trades_count += 1
-                    current_drawdown_real += profit_drawdrow_real
                     current_equity += profit_dollars
+                    if pip_drawdrow_real < worst_mae_pips:
+                        worst_mae_pips = pip_drawdrow_real
+                        worst_mae_usd  = profit_drawdrow_real
 
                     if current_equity > peak_equity:
                         peak_equity = current_equity
                     elif current_equity < worse_equity:
                         worse_equity = current_equity
-
-                    if current_drawdown_real > peak_equity_drawdrown_real:
-                        peak_equity_drawdrown_real = current_drawdown_real
 
                     episode_returns_pips.append(profit_pips)
 
@@ -569,17 +566,16 @@ def main():
                     total_profit_pips += profit_pips
                     profit_dollars_total += profit_dollars
                     trades_count += 1
-                    current_drawdown_real += profit_drawdrow_real
                     current_equity += profit_dollars
-                    
+                    if pip_drawdrow_real < worst_mae_pips:
+                        worst_mae_pips = pip_drawdrow_real
+                        worst_mae_usd  = profit_drawdrow_real
+
                     if current_equity > peak_equity:
                         peak_equity = current_equity
                     elif current_equity < worse_equity:
                         worse_equity = current_equity
-                    
-                    if current_drawdown_real > peak_equity_drawdrown_real:
-                        peak_equity_drawdrown_real = current_drawdown_real
-    
+
                     episode_returns_pips.append(profit_pips)
                     
                     
@@ -604,12 +600,8 @@ def main():
                         sell_points.append((timestamp, sell_price))
                 
                                     
-                drawdown_real = (peak_equity_drawdrown_real - current_drawdown_real) / peak_equity_drawdrown_real if peak_equity_drawdrown_real != 0 else 0
                 drawdown = (peak_equity - current_equity) / peak_equity if peak_equity != 0 else 0
-                
-              
                 drawdown_history_episode.append(drawdown)
-                drawdown_real_history_episode.append(drawdown_real)
 
                 
                 # Step reward: pequeña señal de P&L no realizado para reducir esparsidad.
@@ -671,7 +663,6 @@ def main():
             avg_win = np.mean(winning_profits_pips) if winning_profits_pips else 0
             avg_loss = np.mean(losing_profits_pips) if losing_profits_pips else 0
             max_drawdown = max(drawdown_history_episode) if drawdown_history_episode else 0
-            max_drawdown_real = max(drawdown_real_history_episode) if drawdown_real_history_episode else 0
             
             reward_system.reset_episode()
             
@@ -699,7 +690,7 @@ def main():
 
   [RIESGO]
     Drawdown        : {max_drawdown:.2%}
-    Drawdown real   : {max_drawdown_real:.2%}
+    Peor MAE (pips) : {worst_mae_pips:+.2f}  ({worst_mae_usd:+.2f} USD)
     Sharpe          : {sharpe:.3f}
 
   [AGENTE]
