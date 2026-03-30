@@ -139,6 +139,18 @@ Models and plots are saved to `resultados_cv/`:
 
 
 
+### 2026-03-30
+
+**Ampliar parámetros guardados en checkpoint (`dueling_dqn_con_per.py`, `parametros.py`)**
+- `__init__` de `AI_Trader_per`: agregados parámetros `batch_size`, `train_frequency`, `train_iterations`, `reward_weights` con sus respectivos `self.*`
+- `save_model`: ahora guarda en `_params.txt` los campos `gamma`, `target_model_update`, `memory_size`, `epsilon_final`, `epsilon_decay`, `batch_size`, `train_frequency`, `train_iterations`, y cada peso de reward como `reward_weight_<nombre>`
+- `load_model`: parsea y restaura todos los campos nuevos; los `reward_weights` se reconstruyen iterando las líneas con prefijo `reward_weight_`
+- `get_config_trader()` en `parametros.py`: ahora pasa `batch_size`, `train_frequency`, `train_iterations` y `reward_weights` al constructor
+
+**Documentación detallada de parámetros (`parametros.py`)**
+- Cada parámetro tiene comentario explicando qué hace, qué pasa al subirlo/bajarlo, y por qué el valor actual es el correcto para este modelo (GOLD M15, Dueling DQN + PER)
+- Se incorporó contexto del historial de entrenamiento (episodios catástrofe, bug 50/50, saturación de trade_quality) directamente en los comentarios relevantes
+
 ### 2026-03-17
 
 **Eliminación de Dropbox (`run_con_per.py`, `parametros.py`)**
@@ -220,6 +232,59 @@ Models and plots are saved to `resultados_cv/`:
 - `AdvancedRewardSystem.__init__` ahora acepta parámetro opcional `weights`; si no se pasa, usa los defaults anteriores
 - Las dos instanciaciones en `run_con_per.py` ahora pasan `weights=ConfigReward.get_pesos()`, resolviendo el desacople silencioso entre `parametros.py` y la clase de recompensa
 
+### Observaciones del entrenamiento GOLD# M15 — fold 1 desde cero (2026-03-30)
+
+**Modelo:** `GOLD#_M15_202112200200_202412311530.csv` | arranque desde cero (sin checkpoint) | `cosine_decay` con `COSINE_RESTARTS=False`, `LR_DECAY_STEPS=1000`
+
+**Contexto:** el checkpoint anterior no estaba disponible al iniciar. El agente arrancó completamente desde cero, sin conocimiento previo.
+
+**Comportamiento del LR (cosine_decay confirmado):**
+El LR oscila con período ~13 episodios medido al final de cada episodio (ciclo completo = 2×T_max = 2000 optimizer steps; ~2148 steps/episodio → 1.074 ciclos por episodio).
+- Máximo (~0.001) en ep 13-14, ep 40
+- Mínimo (~0.000011) en ep 20, ep 33
+- LR visible al final del episodio sigue la envolvente coseno con ese período
+
+**Progresión de métricas clave (fold 1, eps 1-40):**
+
+| Ep | P&L (pips) | Accuracy | Avg Loss | Expectancy | LR |
+|----|-----------|----------|----------|------------|----|
+| 1  | -318 | 47.5% | -2.30 | -0.11 | 0.000970 |
+| 12 | -109 | 50.7% | -2.46 | -0.03 | 0.000879 |
+| 20 | -500 | 50.8% | -2.61 | -0.15 | 0.000011 ← mínimo |
+| 31 | -125 | 54.4% | -2.72 | -0.04 | 0.000291 |
+| 33 | -149 | 55.2% | -2.81 | -0.05 | 0.000018 ← mínimo |
+| **39** | **+62** | **56.7%** | **-2.78** | **+0.02** | 0.000946 |
+| 40 | -37  | 57.8% | -2.99 | -0.01 | **0.001000 ← máximo** |
+
+**Episodio 39 — primer breakthrough del fold:**
+- Primer P&L positivo (+62 pips), primer Sharpe positivo (+0.005), primer expectancy positiva (+0.02), primer reward de episodio positivo (+32.42), drawdown mínimo del fold (10.97%).
+- Ocurrió en fold 1 ep 39 partiendo de cero — equivalente al fold 2 ep 37 del entrenamiento anterior (que tenía checkpoint). El agente aprendió más rápido de lo esperado.
+
+**Episodio 40 — destrucción inmediata por LR máximo:**
+- LR llegó a 0.001000 (máximo absoluto del ciclo) justo después del breakthrough.
+- avg_loss saltó de 2.78 a 2.99 (peor del fold), P&L volvió a negativo (-37 pips).
+- Mismo mecanismo que fold 3 del entrenamiento anterior: el LR alto hace updates grandes que destruyen la política de salida. La accuracy siguió subiendo (57.82%) pero el timing de exit se corrompió.
+
+**Patrón estructural confirmado — accuray sube, avg_loss también:**
+- Accuracy: 47.5% (ep1) → 57.8% (ep40). Mejora consistente.
+- Avg_loss: -2.30 (ep1) → -2.99 (ep40). Crece junto con la accuracy.
+- El agente aprende dirección (entrada) pero deja correr los losers — espera que se recuperen en lugar de cortarlos. La accuracy mejora porque entra en mejores momentos, pero eso no compensa el aumento del avg_loss.
+- `risk_adjusted` y `trade_quality` son los únicos componentes consistentemente positivos (igual que en entrenamiento anterior), y son los que están guiando el aprendizaje.
+
+**Conclusión del fold 1:**
+El agente está aprendiendo, y más rápido que en el entrenamiento anterior dado que partió de cero. El problema pendiente es el LR oscilante que genera episodios catástrofe cada vez que alcanza el máximo. Cambiar a `reduce_on_plateau` antes del fold 2.
+
+**Cambio pendiente para fold 2+:**
+```python
+SCHEDULER_TYPE = 'reduce_on_plateau'
+CARGAR_MODELO = True   # cargar checkpoint de ep50 del fold 1
+```
+
+**Descubrimiento — avg_loss crece con la accuracy:**
+Patrón nuevo no observado en el entrenamiento anterior (que arrancó con checkpoint). A medida que el agente mejora la entrada, tolera pérdidas más grandes esperando reversión. Esto refuerza la necesidad del reward de costo de oportunidad (lookahead 10-15 velas en losers) para señalizar que el costo de esperar en una pérdida es alto.
+
+---
+
 ### Observaciones del entrenamiento GOLD# M15 (2026-03-17)
 
 **Modelo:** `GOLD#_M15_202112200200_202412311530.csv` | 4 folds × 50 episodios
@@ -292,6 +357,24 @@ Los episodios con pérdidas mayores a -230 pips (eps 26, 31, 32, 36, 37, 40) apa
 **Cambios recomendados:**
 4. Reward de costo de oportunidad (lookahead 10-15 velas en winners) — ataca el timing de salida
 5. `reset_episode()` al inicio de cada episodio para no contaminar buffers entre episodios
+
+---
+
+## Nota del proyecto — 2026-03-30
+
+**Nota actual: 5.5/7**
+
+El proyecto tiene base técnica sólida (Dueling DQN + PER + Double DQN, walk-forward CV, reward multi-componente, configuración centralizada, historial documentado). El agente aprende dirección con accuracy real (55-58%). No es un proyecto de juguete.
+
+**Lo que falta para llegar a 7/7:**
+
+1. **Agente rentable en producción** — el breakthrough ocurrió en fold 1 ep39 pero no se sostuvo. Falta confirmar rentabilidad consistente a lo largo de múltiples folds y en el set de test final.
+
+2. **Reward de costo de oportunidad** — el agente no recibe señal cuando cierra una posición perdedora tarde (dejó correr el loser). El avg_loss > avg_win es el problema central no resuelto. Sin esta señal el agente no puede aprender a cortar pérdidas.
+
+3. **`reset_episode()` sin conectar** — los buffers de reward (`wins_buffer`, `losses_buffer`, `returns_buffer`) acumulan historia de episodios anteriores contaminando la señal del episodio actual. Llamar `reward_system.reset_episode()` al inicio de cada episodio en `run_con_per.py`.
+
+4. **50 episodios por fold insuficiente** — el agente seguía convergiendo al ep 50 en runs anteriores. Con 100-150 episodios por fold habría tiempo de consolidar post-breakthrough.
 
 ---
 

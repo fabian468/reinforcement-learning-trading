@@ -46,6 +46,10 @@ class AI_Trader_per():
                  patience=10,              # Para reduce_on_plateau
                  factor=0.5,               # Factor de reducción para reduce_on_plateau
                  cosine_restarts=True,    # Para cosine decay con restarts
+                 batch_size=256,
+                 train_frequency=5,
+                 train_iterations=3,
+                 reward_weights=None,
                  ):
         
         # Configurar dispositivo
@@ -90,7 +94,11 @@ class AI_Trader_per():
         self.patience = patience
         self.factor = factor
         self.cosine_restarts = cosine_restarts
-        
+        self.batch_size = batch_size
+        self.train_frequency = train_frequency
+        self.train_iterations = train_iterations
+        self.reward_weights = reward_weights if reward_weights is not None else {}
+
         # Historial del learning rate
         self.lr_history = []
         self.lr_history_episode = []  # Una entrada por episodio (para el plot)
@@ -100,6 +108,8 @@ class AI_Trader_per():
         self.optimizer = self._create_optimizer()
         self.scheduler = self._create_scheduler()
         self.has_noise = hasattr(self.model, "reset_noise")  # Cacheado una vez
+        self.episode_counter = 0
+        self.best_loss_episode = 0
 
         if self.use_double_dqn:
             self.target_model = DuelingDQN(state_size, action_space).to(self.device)
@@ -320,8 +330,14 @@ class AI_Trader_per():
         """Llamar al final de cada episodio. Requerido para reduce_on_plateau;
         para los demás schedulers registra el LR del episodio en lr_history_episode."""
         if self.scheduler is not None and self.scheduler_type == 'reduce_on_plateau':
+            self.episode_counter += 1
+            prev_best = self.scheduler.best
             self.scheduler.step(episode_avg_loss)
             self.learning_rate = self.optimizer.param_groups[0]['lr']
+            if self.scheduler.best < prev_best:
+                self.best_loss_episode = self.episode_counter
+            print(f"  [SCHEDULER] Patience: {self.scheduler.num_bad_epochs}/{self.scheduler.patience}  |  Best loss: {self.scheduler.best:.6f} (ep {self.best_loss_episode})")
+            print("")
         self.lr_history_episode.append(self.learning_rate)
             
     def trade(self, state):
@@ -386,6 +402,16 @@ class AI_Trader_per():
             f.write(f"patience:{self.patience}\n")
             f.write(f"factor:{self.factor}\n")
             f.write(f"cosine_restarts:{self.cosine_restarts}\n")
+            f.write(f"gamma:{self.gamma}\n")
+            f.write(f"target_model_update:{self.target_model_update}\n")
+            f.write(f"memory_size:{self.memory_size}\n")
+            f.write(f"epsilon_final:{self.epsilon_final}\n")
+            f.write(f"epsilon_decay:{self.epsilon_decay}\n")
+            f.write(f"batch_size:{self.batch_size}\n")
+            f.write(f"train_frequency:{self.train_frequency}\n")
+            f.write(f"train_iterations:{self.train_iterations}\n")
+            for k, v in self.reward_weights.items():
+                f.write(f"reward_weight_{k}:{v}\n")
             
         # Guardar memoria
         with open(f"{name}_memory.pkl", "wb") as f:
@@ -456,6 +482,25 @@ class AI_Trader_per():
                                 self.factor = float(value)
                             elif key == "cosine_restarts":
                                 self.cosine_restarts = value.lower() == "true"
+                            elif key == "gamma":
+                                self.gamma = float(value)
+                            elif key == "target_model_update":
+                                self.target_model_update = int(value)
+                            elif key == "memory_size":
+                                self.memory_size = int(value)
+                            elif key == "epsilon_final":
+                                self.epsilon_final = float(value)
+                            elif key == "epsilon_decay":
+                                self.epsilon_decay = float(value)
+                            elif key == "batch_size":
+                                self.batch_size = int(value)
+                            elif key == "train_frequency":
+                                self.train_frequency = int(value)
+                            elif key == "train_iterations":
+                                self.train_iterations = int(value)
+                            elif key.startswith("reward_weight_"):
+                                weight_name = key[len("reward_weight_"):]
+                                self.reward_weights[weight_name] = float(value)
                                 
                 # Recrear scheduler después de cargar parámetros, luego restaurar su estado
                 self.scheduler = self._create_scheduler()
