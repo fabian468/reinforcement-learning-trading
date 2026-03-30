@@ -2,6 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Instrucciones para commits y push
+
+Al hacer un push, **siempre incluir todos los cambios pendientes**, incluyendo:
+- Archivos de código modificados (`*.py`)
+- Carpeta `data/` — agregar CSVs nuevos y registrar eliminaciones de CSVs viejos
+- `CLAUDE.md` con el historial actualizado
+
+No omitir cambios en `data/` ni en archivos que no sean `.py`.
+
 ## Running the project
 
 ```bash
