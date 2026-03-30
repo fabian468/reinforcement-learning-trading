@@ -11,6 +11,8 @@ Al hacer un push, **siempre incluir todos los cambios pendientes**, incluyendo:
 
 No omitir cambios en `data/` ni en archivos que no sean `.py`.
 
+**Nunca incluir en commits:** `.env` (contiene credenciales de Twilio y Dropbox). Está en `.gitignore`.
+
 ## Running the project
 
 ```bash
