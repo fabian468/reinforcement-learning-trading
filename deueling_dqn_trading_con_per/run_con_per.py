@@ -160,7 +160,7 @@ def calculate_short_profit_fast(sell_price, buy_price, pip_value, commission, lo
 def main():
 
     # Imprimir configuración actual (opcional)
-    # imprimir_config()
+    imprimir_config()
 
     # === Usar parámetros centralizados ===
     nombre_csv = ConfigEntorno.NOMBRE_CSV
@@ -387,6 +387,7 @@ def main():
             reward_system.sumaRecompensaRiskAdjusted = 0
             reward_system.sumaRecompensaMomentum = 0
             reward_system.sumaRecompensaTradeQuality = 0
+            reward_system.reset_episode()  # Limpia buffers para que el reward vea solo este episodio
             
             #trader.total_rewards = 0
             
@@ -665,8 +666,6 @@ def main():
             avg_win = np.mean(winning_profits_pips) if winning_profits_pips else 0
             avg_loss = np.mean(losing_profits_pips) if losing_profits_pips else 0
             max_drawdown = max(drawdown_history_episode) if drawdown_history_episode else 0
-            
-            reward_system.reset_episode()
             
             # MOSTRAR RESULTADOS MENOS FRECUENTEMENTE
             # Solo cada 10 episodios o el último

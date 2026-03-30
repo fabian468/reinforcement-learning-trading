@@ -141,6 +141,13 @@ Models and plots are saved to `resultados_cv/`:
 
 ### 2026-03-30
 
+**Fix: `reset_episode()` movido al inicio de cada episodio (`run_con_per.py`)**
+- `reward_system.reset_episode()` se llamaba al **final** del episodio (línea ~670), lo que limpiaba los buffers después de que el episodio ya terminó — completamente inútil.
+- Movido al **inicio** de cada episodio, justo después de resetear los `sumaRecompensa*`.
+- Efecto: `wins_buffer`, `losses_buffer`, `returns_buffer`, `equity_buffer` y `drawdown_buffer` ahora contienen solo trades del episodio actual. Anteriormente acumulaban historia de episodios y folds anteriores, contaminando todos los componentes de reward (profit, sharpe, consistency, risk_adjusted, momentum, trade_quality).
+- El `reset_episode()` del final fue eliminado (redundante y destructivo — tiraba datos válidos recién generados).
+- Impacto en entrenamiento: los primeros ~50 trades de cada episodio tienen buffers en "warm-up" (algunos componentes retornan 0 por debajo del mínimo de datos). Con ~2000+ trades por episodio esto representa el 2.5% inicial — el resto del episodio recibe señal limpia del episodio actual.
+
 **Ampliar parámetros guardados en checkpoint (`dueling_dqn_con_per.py`, `parametros.py`)**
 - `__init__` de `AI_Trader_per`: agregados parámetros `batch_size`, `train_frequency`, `train_iterations`, `reward_weights` con sus respectivos `self.*`
 - `save_model`: ahora guarda en `_params.txt` los campos `gamma`, `target_model_update`, `memory_size`, `epsilon_final`, `epsilon_decay`, `batch_size`, `train_frequency`, `train_iterations`, y cada peso de reward como `reward_weight_<nombre>`
@@ -372,7 +379,7 @@ El proyecto tiene base técnica sólida (Dueling DQN + PER + Double DQN, walk-fo
 
 2. **Reward de costo de oportunidad** — el agente no recibe señal cuando cierra una posición perdedora tarde (dejó correr el loser). El avg_loss > avg_win es el problema central no resuelto. Sin esta señal el agente no puede aprender a cortar pérdidas.
 
-3. **`reset_episode()` sin conectar** — los buffers de reward (`wins_buffer`, `losses_buffer`, `returns_buffer`) acumulan historia de episodios anteriores contaminando la señal del episodio actual. Llamar `reward_system.reset_episode()` al inicio de cada episodio en `run_con_per.py`.
+3. ~~**`reset_episode()` sin conectar**~~ — **RESUELTO (2026-03-30)**.
 
 4. **50 episodios por fold insuficiente** — el agente seguía convergiendo al ep 50 en runs anteriores. Con 100-150 episodios por fold habría tiempo de consolidar post-breakthrough.
 
@@ -386,7 +393,7 @@ El proyecto tiene base técnica sólida (Dueling DQN + PER + Double DQN, walk-fo
 
 ### Importantes
 - **`COSINE_RESTARTS = False` (ya aplicado)** — cambiado en `parametros.py`. Elimina los saltos bruscos de LR que causaban episodios catástrofe (-250 a -308 pips) en fold 3. Usa `CosineAnnealingLR` en lugar de `CosineAnnealingWarmRestarts`. **Ojo:** `CosineAnnealingLR` con `T_max=1000` igual oscila — baja de LR_max a LR_min en 1000 pasos y luego sube de nuevo suavemente. La diferencia clave es que no hay saltos bruscos, todo es curva coseno suave. Si en el próximo entrenamiento sigue habiendo varianza alta entre episodios, la solución definitiva es poner `T_max` igual al total de pasos del entrenamiento completo (folds × episodios × ~600 optimizer steps/episodio) para que el LR solo baje y nunca suba.
-- **`reset_episode()` no se llama entre episodios** — los buffers de `wins_buffer`, `losses_buffer` y `returns_buffer` acumulan historial de episodios anteriores dentro del mismo fold, contaminando el reward del episodio actual con datos de episodios pasados. Evaluar si llamar `reward_system.reset_episode()` al inicio de cada episodio mejora la señal.
+- ~~**`reset_episode()` no se llama entre episodios**~~ — **RESUELTO (2026-03-30)**. Movido al inicio de cada episodio en `run_con_per.py`. Los buffers ahora se limpian correctamente al comenzar cada episodio.
 - **Aumentar episodios por fold** — 50 episodios es insuficiente; el agente seguía convergiendo al ep 50 del fold 2. Considerar 100-150 episodios por fold.
 - **Drawdown penalty acumula por trade** — con 2500 trades por episodio y drawdown persistente >5%, la penalización acumulada domina el reward total. Considerar calcularla una vez por episodio o normalizarla por número de trades.
 
