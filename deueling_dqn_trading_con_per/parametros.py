@@ -404,7 +404,7 @@ class ConfigEntrenamiento:
     # ep 16 de fold 3, ep 8 de fold 4 — la convergencia acelera entre folds.
     # Recomendado: 100-150 para dar tiempo de consolidación post-breakthrough.
     # Cada episodio en fold de ~14k velas M15 tarda ~X minutos (medir con cProfile).
-    EPISODES = 50
+    EPISODES = 300
 
     # N_FOLDS: número de folds en la validación cruzada walk-forward.
     # Cada fold es una porción cronológica del 80% de datos de entrenamiento.
@@ -469,7 +469,7 @@ class ConfigModelo:
     # Desventaja: si se cambió BALANCE_INICIAL, LOT_SIZE o la función de reward,
     #   las experiencias antiguas tienen rewards en escala diferente → gradientes corruptos.
     # Regla: False si se cambió cualquier cosa que afecte el valor numérico del reward.
-    CARGAR_MEMORIA_BUFFER = False
+    CARGAR_MEMORIA_BUFFER = True
 
 
 # ==============================================================================
@@ -495,7 +495,7 @@ class ConfigBackend:
     # LIVE_PLOT: muestra el gráfico de compras/ventas en tiempo real durante training.
     # Útil para ver visualmente qué hace el agente, pero agrega overhead de matplotlib.
     # Desactivar si el entrenamiento es lento o se corre en servidor sin display.
-    LIVE_PLOT = True
+    LIVE_PLOT = False
     LIVE_PLOT_WINDOW = 150   # Cuántas velas mostrar en el gráfico
     LIVE_PLOT_UPDATE = 100   # Actualizar cada N steps del episodio
 

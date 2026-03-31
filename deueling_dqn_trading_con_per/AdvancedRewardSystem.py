@@ -15,7 +15,7 @@ import numpy as np
 from collections import deque
 
 class AdvancedRewardSystem:
-    def __init__(self, initial_balance=100, risk_free_rate=0.02):
+    def __init__(self, initial_balance=100, risk_free_rate=0.02, weights=None):
         self.initial_balance = initial_balance
         self.inv_initial_balance = 1.0 / initial_balance if initial_balance != 0 else 0
         self.risk_free_rate = risk_free_rate / 252  # Tasa diaria
@@ -23,6 +23,8 @@ class AdvancedRewardSystem:
         self.returns_buffer = deque(maxlen=50)
         self.equity_buffer = deque(maxlen=50)
         self.drawdown_buffer = deque(maxlen=30)
+        self.wins_buffer = deque(maxlen=50)
+        self.losses_buffer = deque(maxlen=50)
 
         self.previous_equity = initial_balance
 
@@ -34,7 +36,7 @@ class AdvancedRewardSystem:
         self.sumaRecompensaMomentum = 0
         self.sumaRecompensaTradeQuality = 0
 
-        self.weights = {
+        default_weights = {
             'profit': 1.0,
             'sharpe': 0.3,
             'drawdown': 0.2,
@@ -43,6 +45,7 @@ class AdvancedRewardSystem:
             'momentum': 0,
             'trade_quality': 0
         }
+        self.weights = weights if weights is not None else default_weights
 
         self.sum_map = {
             'profit': 'sumaRecompensaProfit',
@@ -54,10 +57,22 @@ class AdvancedRewardSystem:
             'trade_quality': 'sumaRecompensaTradeQuality'
         }
 
-    def calculate_reward(self, profit_dollars, current_equity, peak_equity, trade_returns_history, is_trade_closed=False):
+    def calculate_reward(self, profit_dollars, current_equity, peak_equity, trade_returns_history, is_trade_closed=False, episode_wins=None, episode_losses=None):
         reward_components = {}
 
-        reward_components['profit'] =  np.tanh(profit_dollars)
+        if len(self.wins_buffer) > 0 and len(self.losses_buffer) > 0:
+            avg_win  = np.mean(self.wins_buffer)
+            avg_loss = abs(np.mean(self.losses_buffer))
+            if episode_wins is not None and episode_losses is not None and (episode_wins + episode_losses) > 0:
+                total    = episode_wins + episode_losses
+                accuracy = episode_wins / total
+            else:
+                total    = len(self.wins_buffer) + len(self.losses_buffer)
+                accuracy = len(self.wins_buffer) / total
+            expectancy = (accuracy * avg_win) - ((1 - accuracy) * avg_loss)
+            reward_components['profit'] = np.tanh(expectancy / (self.initial_balance * 0.01))
+        else:
+            reward_components['profit'] = np.tanh(profit_dollars)
 
         returns_np = np.fromiter(self.returns_buffer, dtype=np.float32) if len(self.returns_buffer) > 0 else None
 
@@ -133,31 +148,26 @@ class AdvancedRewardSystem:
         self.returns_buffer.append(profit_dollars * self.inv_initial_balance)
         self.equity_buffer.append(current_equity)
         self.drawdown_buffer.append(drawdown_ratio)
-
-    def get_adaptive_weights(self, episode):
-        adaptive_weights = self.weights.copy()
-        if episode % 250 == 0:
-            adaptive_weights['drawdown'] += 0.5
-            adaptive_weights['consistency'] += 0.2
-            adaptive_weights['profit'] += 0.5
-        elif episode % 400 == 0:
-            adaptive_weights['profit'] += 1.5
-            adaptive_weights['sharpe'] += 1.3
-            adaptive_weights['drawdown'] -= 1.1
-        return adaptive_weights
+        if profit_dollars > 0:
+            self.wins_buffer.append(profit_dollars)
+        elif profit_dollars < 0:
+            self.losses_buffer.append(profit_dollars)
 
     def reset_episode(self):
         self.returns_buffer.clear()
         self.equity_buffer.clear()
         self.drawdown_buffer.clear()
+        self.wins_buffer.clear()
+        self.losses_buffer.clear()
 
 
 def calculate_advanced_reward(reward_system, profit_dollars, current_equity, peak_equity,
-                              episode_returns, is_trade_closed=False, add_noise=True):
-    
+                              episode_returns, is_trade_closed=False, add_noise=True,
+                              episode_wins=None, episode_losses=None):
+
     reward, components = reward_system.calculate_reward(
         profit_dollars, current_equity, peak_equity,
-        episode_returns, is_trade_closed
+        episode_returns, is_trade_closed, episode_wins, episode_losses
     )
     if add_noise:
         reward += np.random.normal(0, 0.01)

@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Flujo del Algoritmo — Dueling DQN Trading GOLD M15</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #0f1117; color: #e0e0e0; padding: 30px; }
+  h1 { text-align: center; color: #f0c040; font-size: 1.4em; margin-bottom: 8px; }
+  h2 { text-align: center; color: #888; font-size: 0.9em; margin-bottom: 30px; font-weight: normal; }
+
+  .flow { display: flex; flex-direction: column; align-items: center; gap: 0; }
+
+  /* --- FASES --- */
+  .phase { width: 100%; max-width: 960px; margin-bottom: 6px; }
+  .phase-title {
+    font-size: 0.72em; font-weight: bold; text-transform: uppercase;
+    letter-spacing: 2px; color: #555; margin-bottom: 6px; padding-left: 4px;
+  }
+
+  /* --- BLOQUES --- */
+  .row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .box {
+    border-radius: 10px; padding: 12px 16px; font-size: 0.82em;
+    min-width: 170px; max-width: 220px; flex: 1;
+    border: 1px solid transparent; position: relative;
+  }
+  .box .label { font-size: 0.68em; font-weight: bold; text-transform: uppercase;
+    letter-spacing: 1px; margin-bottom: 5px; opacity: 0.7; }
+  .box .value { font-family: 'Consolas', monospace; font-size: 0.9em; line-height: 1.6; }
+  .box .note { font-size: 0.72em; margin-top: 6px; opacity: 0.6; font-style: italic; }
+
+  /* colores por módulo */
+  .data    { background: #1a2030; border-color: #2a4080; }
+  .state   { background: #1a2820; border-color: #2a6040; }
+  .agent   { background: #2a1a2a; border-color: #6040a0; }
+  .net     { background: #221a30; border-color: #8060c0; }
+  .action  { background: #1a2a10; border-color: #508030; }
+  .reward  { background: #2a1a10; border-color: #a06030; }
+  .memory  { background: #101a2a; border-color: #205080; }
+  .train   { background: #1a1020; border-color: #603080; }
+  .update  { background: #201a10; border-color: #706030; }
+
+  /* --- FLECHAS --- */
+  .arrow {
+    text-align: center; color: #444; font-size: 1.2em;
+    height: 20px; line-height: 20px; width: 100%; max-width: 960px;
+  }
+  .arrow.big { font-size: 0.7em; color: #555; letter-spacing: 1px; }
+
+  /* --- BLOQUE ESPECIAL: RED NEURONAL --- */
+  .network-block {
+    width: 100%; max-width: 960px; background: #1a1030;
+    border: 1px solid #6040a0; border-radius: 12px; padding: 16px 20px; margin-bottom: 6px;
+  }
+  .network-block .net-title { font-size: 0.72em; font-weight: bold; color: #9070d0;
+    text-transform: uppercase; letter-spacing: 2px; margin-bottom: 12px; }
+  .net-row { display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap; }
+  .net-layer {
+    background: #2a1a40; border: 1px solid #7050b0; border-radius: 8px;
+    padding: 8px 12px; font-size: 0.78em; text-align: center; min-width: 110px;
+  }
+  .net-layer .ln { font-size: 0.65em; color: #9070d0; }
+  .net-layer .sz { font-family: monospace; font-size: 0.85em; color: #d0b0ff; margin-top: 2px; }
+  .net-arrow { color: #6040a0; font-size: 1.0em; }
+  .stream-split {
+    display: flex; gap: 10px; margin-top: 10px; justify-content: center;
+  }
+  .stream {
+    flex: 1; max-width: 360px; background: #201530; border: 1px solid #805090;
+    border-radius: 8px; padding: 10px 14px;
+  }
+  .stream .s-title { font-size: 0.68em; color: #b080e0; font-weight: bold;
+    text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+  .stream .s-row { display: flex; align-items: center; gap: 6px; font-size: 0.78em; margin-bottom: 4px; }
+  .stream .s-box { background: #2a1a40; border: 1px solid #7050b0; border-radius: 6px;
+    padding: 4px 8px; font-family: monospace; min-width: 80px; text-align: center; }
+  .combine { text-align: center; margin-top: 8px; font-size: 0.78em; color: #c0a0f0; }
+
+  /* --- BLOQUE PER MEMORY --- */
+  .per-block {
+    width: 100%; max-width: 960px; background: #0f1a28;
+    border: 1px solid #205080; border-radius: 12px; padding: 16px 20px; margin-bottom: 6px;
+  }
+  .per-block .per-title { font-size: 0.72em; font-weight: bold; color: #4080c0;
+    text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px; }
+  .per-row { display: flex; gap: 10px; align-items: stretch; flex-wrap: wrap; }
+  .per-item {
+    flex: 1; min-width: 160px; background: #142030; border: 1px solid #306090;
+    border-radius: 8px; padding: 10px 12px; font-size: 0.78em;
+  }
+  .per-item .pi-title { font-size: 0.65em; color: #5090d0; font-weight: bold;
+    text-transform: uppercase; margin-bottom: 6px; }
+
+  /* --- BLOQUE TRAIN --- */
+  .train-block {
+    width: 100%; max-width: 960px; background: #18101f;
+    border: 1px solid #603080; border-radius: 12px; padding: 16px 20px; margin-bottom: 6px;
+  }
+  .train-block .t-title { font-size: 0.72em; font-weight: bold; color: #9060c0;
+    text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px; }
+  .train-steps { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: center; }
+  .t-step {
+    background: #22103a; border: 1px solid #7050a0; border-radius: 8px;
+    padding: 8px 12px; font-size: 0.78em; min-width: 130px; text-align: center;
+  }
+  .t-step .ts-num { font-size: 0.65em; color: #9060c0; font-weight: bold; margin-bottom: 3px; }
+  .t-arrow { color: #603080; font-size: 1.0em; }
+
+  /* --- REWARD BREAKDOWN --- */
+  .reward-block {
+    width: 100%; max-width: 960px; background: #1f1208;
+    border: 1px solid #a06030; border-radius: 12px; padding: 16px 20px; margin-bottom: 6px;
+  }
+  .reward-block .r-title { font-size: 0.72em; font-weight: bold; color: #d08040;
+    text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px; }
+  .r-comps { display: flex; gap: 6px; flex-wrap: wrap; }
+  .r-comp {
+    flex: 1; min-width: 110px; background: #2a1808; border: 1px solid #804020;
+    border-radius: 8px; padding: 8px 10px; font-size: 0.78em;
+  }
+  .r-comp .rc-name { font-size: 0.65em; color: #d08040; font-weight: bold;
+    text-transform: uppercase; margin-bottom: 4px; }
+  .r-comp .rc-peso { font-family: monospace; font-size: 0.72em; color: #a06030; }
+  .r-comp .rc-note { font-size: 0.68em; opacity: 0.6; margin-top: 3px; }
+
+  /* --- EJEMPLO CONCRETO --- */
+  .example-block {
+    width: 100%; max-width: 960px; background: #111a11;
+    border: 1px solid #307030; border-radius: 12px; padding: 16px 20px; margin-bottom: 6px;
+  }
+  .example-block .e-title { font-size: 0.72em; font-weight: bold; color: #50a050;
+    text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px; }
+  .e-row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .e-item {
+    flex: 1; min-width: 180px; background: #182018; border: 1px solid #406040;
+    border-radius: 8px; padding: 10px 12px; font-size: 0.78em; font-family: monospace;
+    line-height: 1.7;
+  }
+  .e-item .ei-title { font-size: 0.65em; color: #60c060; font-weight: bold;
+    text-transform: uppercase; margin-bottom: 5px; font-family: 'Segoe UI', sans-serif; }
+  .hl { color: #80e080; }
+  .hl2 { color: #f0c040; }
+  .hl3 { color: #c080f0; }
+  .hl4 { color: #f08060; }
+
+  hr { border: none; border-top: 1px solid #222; width: 100%; max-width: 960px; margin: 10px 0; }
+</style>
+</head>
+<body>
+
+<h1>Flujo del Algoritmo — Dueling DQN con PER</h1>
+<h2>GOLD (XAUUSD) M15 · Un paso completo desde estado hasta entrenamiento</h2>
+
+<div class="flow">
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- FASE 1: DATOS                                   -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div class="phase">
+    <div class="phase-title">① Datos del mercado (pre-computados por fold)</div>
+    <div class="row">
+      <div class="box data">
+        <div class="label">CSV MT5</div>
+        <div class="value">
+          GOLD# M15<br>
+          Open / High / Low<br>
+          Close / Volume<br>
+          Spread
+        </div>
+        <div class="note">~14.334 velas por fold</div>
+      </div>
+      <div class="box data">
+        <div class="label">Normalización</div>
+        <div class="value">
+          StandardScaler<br>
+          ajustado sobre<br>
+          train_data completo<br>
+          (no hay data leakage)
+        </div>
+      </div>
+      <div class="box data">
+        <div class="label">Indicadores</div>
+        <div class="value">
+          RSI(14) — ewm<br>
+          MACD line<br>
+          MACD signal<br>
+          MACD histogram<br>
+          Día sin/cos<br>
+          Hora sin/cos
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow">↓</div>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- FASE 2: CONSTRUCCIÓN DEL ESTADO                 -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div class="phase">
+    <div class="phase-title">② Construcción del estado — get_full_state()</div>
+    <div class="row">
+      <div class="box state">
+        <div class="label">Mercado (base)</div>
+        <div class="value">
+          18 velas × 5 OHLCV<br>
+          = 90 features<br><br>
+          + RSI (1)<br>
+          + MACD ×3 (3)<br>
+          + día sin/cos (2)<br>
+          + hora sin/cos (2)<br>
+          = <b>98 features</b>
+        </div>
+      </div>
+      <div class="box state">
+        <div class="label">Posición actual</div>
+        <div class="value">
+          has_long  ∈ {0, 1}<br>
+          has_short ∈ {0, 1}<br><br>
+          upnl_norm =<br>
+          tanh(upnl / (balance × 0.02))<br><br>
+          = <b>3 features</b>
+        </div>
+        <div class="note">El agente sabe si tiene posición abierta y cuánto gana/pierde</div>
+      </div>
+      <div class="box state">
+        <div class="label">Estado final</div>
+        <div class="value">
+          98 + 3 = <b style="color:#80e080">101 features</b><br><br>
+          np.float32<br>
+          shape: (101,)
+        </div>
+        <div class="note">Mismo vector de entrada para la red en cada step</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow">↓</div>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- FASE 3: RED NEURONAL                            -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div class="network-block">
+    <div class="net-title">③ Red Neuronal — DuelingDQN (forward pass)</div>
+    <div class="net-row">
+      <div class="net-layer">
+        <div class="ln">Input</div>
+        <div class="sz">101</div>
+      </div>
+      <div class="net-arrow">→</div>
+      <div class="net-layer">
+        <div class="ln">LayerNorm + FC</div>
+        <div class="sz">101 → 512</div>
+        <div class="ln">LeakyReLU + Drop(0.02)</div>
+      </div>
+      <div class="net-arrow">→</div>
+      <div class="net-layer">
+        <div class="ln">FC</div>
+        <div class="sz">512 → 256</div>
+        <div class="ln">LeakyReLU + Drop(0.02)</div>
+      </div>
+      <div class="net-arrow">→</div>
+      <div class="net-layer">
+        <div class="ln">FC</div>
+        <div class="sz">256 → 128</div>
+        <div class="ln">LeakyReLU + Drop(0.02)</div>
+      </div>
+    </div>
+
+    <div class="stream-split">
+      <div class="stream">
+        <div class="s-title">Stream de Valor V(s)</div>
+        <div class="s-row">
+          <div class="s-box">128 → 64<br><span style="font-size:0.7em">Linear</span></div>
+          <span>→</span>
+          <div class="s-box">64 → 1<br><span style="font-size:0.7em">NoisyLinear</span></div>
+        </div>
+        <div style="font-size:0.72em; margin-top:6px; color:#9070d0">
+          ¿Qué tan bueno es este estado independientemente de la acción?
+        </div>
+      </div>
+      <div class="stream">
+        <div class="s-title">Stream de Ventaja A(s,a)</div>
+        <div class="s-row">
+          <div class="s-box">128 → 128<br><span style="font-size:0.7em">Linear</span></div>
+          <span>→</span>
+          <div class="s-box">128 → 5<br><span style="font-size:0.7em">NoisyLinear</span></div>
+        </div>
+        <div style="font-size:0.72em; margin-top:6px; color:#9070d0">
+          ¿Cuánto mejor es cada acción respecto al promedio?
+        </div>
+      </div>
+    </div>
+
+    <div class="combine">
+      Q(s,a) = V(s) + A(s,a) − mean(A(s,·))
+      <span style="color:#7050a0; margin-left:10px; font-size:0.85em">→ vector de 5 Q-values</span>
+    </div>
+  </div>
+
+  <div class="arrow">↓</div>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- FASE 4: SELECCIÓN DE ACCIÓN                     -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div class="phase">
+    <div class="phase-title">④ Selección de acción — trade(state)</div>
+    <div class="row">
+      <div class="box agent">
+        <div class="label">ε-greedy check</div>
+        <div class="value">
+          random() ≤ ε ?<br>
+          → acción aleatoria<br><br>
+          ε actual: <b>~0.86</b><br>
+          ε final: 0.05<br>
+          decay: ×0.985/episodio
+        </div>
+        <div class="note">NoisyLinear ya explora — ε es exploración adicional</div>
+      </div>
+      <div class="box agent">
+        <div class="label">Acción del modelo</div>
+        <div class="value">
+          reset_noise()<br>
+          argmax(Q-values)<br><br>
+          Q = [q0, q1, q2, q3, q4]<br>
+          acción = índice mayor
+        </div>
+      </div>
+      <div class="box action">
+        <div class="label">Espacio de acciones (5)</div>
+        <div class="value">
+          0 → Hold<br>
+          1 → Buy (abrir long)<br>
+          2 → Sell (cerrar long)<br>
+          3 → Short (abrir short)<br>
+          4 → Cover (cerrar short)
+        </div>
+        <div class="note">Solo 1 posición abierta a la vez. Cierre forzado a hora 23.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow">↓</div>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- FASE 5: REWARD                                  -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div class="reward-block">
+    <div class="r-title">⑤ Sistema de Recompensa — AdvancedRewardSystem</div>
+    <div style="font-size:0.78em; margin-bottom:10px; color:#888;">
+      Reward complejo solo al cerrar trade · Step reward pequeño mientras posición está abierta (tanh(upnl / 2%·balance) × 0.01)
+    </div>
+    <div class="r-comps">
+      <div class="r-comp">
+        <div class="rc-name">Profit</div>
+        <div class="rc-peso">peso: 1.0</div>
+        <div class="rc-note">tanh(expectancy / balance×0.01) — usa accuracy real del episodio</div>
+      </div>
+      <div class="r-comp">
+        <div class="rc-name">Sharpe</div>
+        <div class="rc-peso">peso: 0.3</div>
+        <div class="rc-note">Rolling Sharpe últimos 50 trades</div>
+      </div>
+      <div class="r-comp">
+        <div class="rc-name">Drawdown</div>
+        <div class="rc-peso">peso: 0.3</div>
+        <div class="rc-note">Penaliza si DD &gt; 5% del equity pico</div>
+      </div>
+      <div class="r-comp">
+        <div class="rc-name">Consistency</div>
+        <div class="rc-peso">peso: 0.2</div>
+        <div class="rc-note">Coef. variación de retornos</div>
+      </div>
+      <div class="r-comp">
+        <div class="rc-name">Risk Adj.</div>
+        <div class="rc-peso">peso: 0.3</div>
+        <div class="rc-note">profit / (std_returns × balance)</div>
+      </div>
+      <div class="r-comp">
+        <div class="rc-name">Momentum</div>
+        <div class="rc-peso">peso: 0.15</div>
+        <div class="rc-note">Tendencia últimos 3 trades del equity</div>
+      </div>
+      <div class="r-comp">
+        <div class="rc-name">Trade Quality</div>
+        <div class="rc-peso">peso: 0.03 ⚠️</div>
+        <div class="rc-note">Reducido — fórmula satura en ±0.95</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow">↓</div>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- FASE 6: MEMORIA PER                             -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div class="per-block">
+    <div class="per-title">⑥ Memoria Priorizada (PER) — SumTree</div>
+    <div class="per-row">
+      <div class="per-item">
+        <div class="pi-title">Almacenar experiencia</div>
+        (s, a, r, s', done)<br>
+        prioridad inicial = max_priority<br>
+        capacity: 250.000 transiciones<br>
+        <span style="font-size:0.72em; color:#5090d0">~2 folds completos de historia</span>
+      </div>
+      <div class="per-item">
+        <div class="pi-title">Estructura SumTree</div>
+        Árbol binario donde<br>
+        cada nodo = suma de hijos<br>
+        Muestreo O(log N)<br>
+        <span style="font-size:0.72em; color:#5090d0">prioridad = (|TD_error| + 1e-3)^0.6</span>
+      </div>
+      <div class="per-item">
+        <div class="pi-title">Sampling estratificado</div>
+        Rango [0, total] dividido<br>
+        en batch_size segmentos<br>
+        → 1 sample por segmento<br>
+        <span style="font-size:0.72em; color:#5090d0">garantiza cobertura uniforme + prioridad</span>
+      </div>
+      <div class="per-item">
+        <div class="pi-title">IS Weights (corrección)</div>
+        w_i = (N × P(i))^(-β)<br>
+        β: 0.4 → 1.0 en 100k steps<br>
+        <span style="font-size:0.72em; color:#5090d0">corrige el sesgo del muestreo no-uniforme</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow big">↓ &nbsp; cada TRAIN_FREQUENCY=20 steps → batch_train × TRAIN_ITERATIONS=3 &nbsp; ↓</div>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- FASE 7: ENTRENAMIENTO                           -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div class="train-block">
+    <div class="t-title">⑦ Entrenamiento — batch_train() · Double DQN + AMP</div>
+    <div class="train-steps">
+      <div class="t-step">
+        <div class="ts-num">PASO 1</div>
+        Samplear 256 exp.<br>del SumTree<br>
+        <span style="font-size:0.7em; color:#9060c0">stratified sampling</span>
+      </div>
+      <div class="t-arrow">→</div>
+      <div class="t-step">
+        <div class="ts-num">PASO 2</div>
+        Q(s,a) online<br>
+        <span style="font-size:0.7em">= modelo actual</span><br>
+        <span style="font-size:0.7em; color:#9060c0">forward pass</span>
+      </div>
+      <div class="t-arrow">→</div>
+      <div class="t-step">
+        <div class="ts-num">PASO 3 — Double DQN</div>
+        online → mejores acciones s'<br>
+        target → evalúa esas acciones<br>
+        <span style="font-size:0.7em; color:#9060c0">evita sobreestimación</span>
+      </div>
+      <div class="t-arrow">→</div>
+      <div class="t-step">
+        <div class="ts-num">PASO 4</div>
+        Q_target =<br>
+        r + γ·Q_target(s', a*)<br>
+        γ = 0.98
+      </div>
+      <div class="t-arrow">→</div>
+      <div class="t-step">
+        <div class="ts-num">PASO 5</div>
+        TD error =<br>
+        |Q_target − Q_online|<br>
+        <span style="font-size:0.7em; color:#9060c0">→ actualizar prioridades</span>
+      </div>
+      <div class="t-arrow">→</div>
+      <div class="t-step">
+        <div class="ts-num">PASO 6</div>
+        Loss = MSE ponderado<br>
+        × IS weights<br>
+        Backprop + clip(1.0)<br>
+        AMP (fp16 en GPU)
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow">↓</div>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- FASE 8: UPDATES PERIÓDICOS                      -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div class="phase">
+    <div class="phase-title">⑧ Updates periódicos</div>
+    <div class="row">
+      <div class="box update">
+        <div class="label">Target Network sync</div>
+        <div class="value">
+          cada 200 optimizer steps<br><br>
+          target.load_state_dict(<br>
+          &nbsp;&nbsp;online.state_dict())<br><br>
+          Estabiliza los Q-targets
+        </div>
+      </div>
+      <div class="box update">
+        <div class="label">Scheduler LR</div>
+        <div class="value">
+          ReduceLROnPlateau<br>
+          métrica: TD loss<br>
+          patience: 15 episodios<br>
+          factor: ×0.5<br>
+          LR: 0.001 → 0.00001
+        </div>
+      </div>
+      <div class="box update">
+        <div class="label">Epsilon decay</div>
+        <div class="value">
+          ε × 0.985 por episodio<br>
+          ε_inicio = 1.0<br>
+          ε_final = 0.05<br><br>
+          NoisyLinear explora<br>
+          incluso con ε bajo
+        </div>
+      </div>
+      <div class="box update">
+        <div class="label">Guardado</div>
+        <div class="value">
+          cada 10 episodios<br>
+          .pth (red + optimizer)<br>
+          _target.pth<br>
+          _params.txt<br>
+          _memory.pkl
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow">↓ &nbsp; repetir por 14.334 steps/episodio × 50 episodios × 4 folds ↓</div>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- EJEMPLO CONCRETO                                -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <hr>
+  <div class="example-block">
+    <div class="e-title">Ejemplo concreto — un step particular (episodio 39, fold 1)</div>
+    <div class="e-row">
+      <div class="e-item">
+        <div class="ei-title">Estado de entrada</div>
+        <span class="hl">18 velas GOLD M15</span><br>
+        close[-1] = 2.651,30<br>
+        RSI = 58.4 (neutral-alto)<br>
+        MACD line = +0.12<br>
+        hora = 14:00 (Londres activo)<br>
+        <span class="hl2">has_long = 1.0</span><br>
+        <span class="hl2">upnl_norm = +0.18</span><br>
+        <span style="color:#666">(ganando ~$3.6)</span>
+      </div>
+      <div class="e-item">
+        <div class="ei-title">Q-values de salida</div>
+        Q[Hold]  = <span class="hl">2.41</span><br>
+        Q[Buy]   = 0.83 <span style="color:#666">(ya tiene long)</span><br>
+        Q[Sell]  = <span class="hl2">2.38</span><br>
+        Q[Short] = 1.12<br>
+        Q[Cover] = 0.91<br><br>
+        → acción: <span class="hl">0 (Hold)</span><br>
+        <span style="color:#666">La red prefiere esperar</span>
+      </div>
+      <div class="e-item">
+        <div class="ei-title">Al cerrar la posición</div>
+        profit_pips = <span class="hl">+4.2</span><br>
+        profit_usd  = +$4.20<br><br>
+        reward_profit   = <span class="hl">+0.08</span><br>
+        reward_drawdown = -0.03<br>
+        reward_sharpe   = +0.01<br>
+        <span class="hl2">reward_total    = +0.12</span><br><br>
+        <span style="color:#666">TD error alto → prioridad alta → se muestrea más seguido</span>
+      </div>
+      <div class="e-item">
+        <div class="ei-title">Resultado del episodio</div>
+        P&L: <span class="hl">+62.45 pips</span><br>
+        Accuracy: 56.74%<br>
+        Avg Win:  +2.16 pips<br>
+        Avg Loss: -2.78 pips<br>
+        Sharpe: <span class="hl2">+0.005</span><br>
+        Reward ep: <span class="hl">+32.42</span><br><br>
+        <span class="hl3">→ Primer episodio positivo</span><br>
+        <span style="color:#666">fold 1, desde cero</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>
