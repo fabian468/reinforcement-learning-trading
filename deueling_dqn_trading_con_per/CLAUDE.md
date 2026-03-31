@@ -148,7 +148,13 @@ Models and plots are saved to `resultados_cv/`:
 
 > **INSTRUCCIÓN PARA CLAUDE:** Cada vez que se realice un cambio en el código, debe agregarse una entrada en esta sección con fecha, archivo(s) modificado(s) y descripción del cambio. Esto es obligatorio, no opcional.
 
+### 2026-03-31
 
+**TensorBoard activado y métricas completadas (`tensorboard_logger.py`, `run_con_per.py`, `parametros.py`)**
+- `TENSORBOARD = True` en `ConfigBackend`.
+- `log_episode` ampliado con: `avg_win/loss`, `expectancy`, `profit_factor`, `worst_mae_pips`, `force_closes`, `learning_rate`, `loss_td`, y los 7 componentes del reward breakdown (`reward_profit`, `reward_sharpe`, `reward_drawdown`, `reward_consistency`, `reward_risk_adjusted`, `reward_momentum`, `reward_trade_quality`).
+- Call en `run_con_per.py` actualizado para pasar todos los nuevos parámetros.
+- Uso en vast.ai vía SSH tunnel: `ssh -L 6006:localhost:6006 user@ip -p puerto`, luego en vast.ai: `tensorboard --logdir=runs/ --host 0.0.0.0`, y abrir `localhost:6006` en el browser local.
 
 ### 2026-03-30
 

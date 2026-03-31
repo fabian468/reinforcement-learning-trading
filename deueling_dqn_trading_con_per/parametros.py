@@ -490,7 +490,7 @@ class ConfigBackend:
 
     # TENSORBOARD: activa el logger de TensorBoard.
     # False en entornos sin display o al entrenar en la nube.
-    TENSORBOARD = False
+    TENSORBOARD = True
 
     # LIVE_PLOT: muestra el gráfico de compras/ventas en tiempo real durante training.
     # Útil para ver visualmente qué hace el agente, pero agrega overhead de matplotlib.

@@ -738,7 +738,18 @@ def main():
                     profit_usd=profit_dollars_total, profit_pips=total_profit_pips,
                     equity=current_equity, sharpe=sharpe, drawdown=max_drawdown,
                     accuracy=accuracy, trades=trades_count,
-                    epsilon=trader.epsilon, reward_episode=reward_episode
+                    epsilon=trader.epsilon, reward_episode=reward_episode,
+                    avg_win=avg_win, avg_loss=avg_loss,
+                    expectancy=expectancy, profit_factor=profit_factor,
+                    worst_mae_pips=worst_mae_pips, force_closes=force_closes,
+                    learning_rate=trader.learning_rate, loss_td=current_loss,
+                    reward_profit=reward_system.sumaRecompensaProfit,
+                    reward_sharpe=reward_system.sumaRecompensaSharpe,
+                    reward_drawdown=reward_system.sumaRecompensaDrawndown,
+                    reward_consistency=reward_system.sumaRecompensaConsistency,
+                    reward_risk_adjusted=reward_system.sumaRecompensaRiskAdjusted,
+                    reward_momentum=reward_system.sumaRecompensaMomentum,
+                    reward_trade_quality=reward_system.sumaRecompensaTradeQuality,
                 )
             
             # GUARDAR MODELO MENOS FRECUENTEMENTE
