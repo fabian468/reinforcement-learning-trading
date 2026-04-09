@@ -291,103 +291,81 @@ class ConfigScheduler:
 # ==============================================================================
 
 class ConfigReward:
-    """Pesos del sistema de recompensas avanzadas
+    """Pesos del sistema de recompensas v2.0 (2026-04-08)
 
-    Cada componente genera un valor en el rango [-1, 1] (por el tanh) y se
-    multiplica por su peso antes de sumarse al reward total del step.
-    El reward total se acumula sobre todos los trades del episodio.
+    Cada componente genera un valor en [-1, 1] vía tanh y se multiplica por su
+    peso antes de sumarse al reward total del trade cerrado.
 
-    Componentes activos actualmente (peso > 0):
-      profit, sharpe, drawdown, consistency, risk_adjusted, momentum, trade_quality
+    NOTA: los nombres internos de los atributos acumuladores NO cambiaron para
+    mantener compatibilidad con run_con_per.py y TensorBoard. Los componentes
+    risk_adjusted y momentum fueron reemplazados conceptualmente:
+      sumaRecompensaRiskAdjusted → loss_severity
+      sumaRecompensaMomentum     → win_retention
 
-    Guía de ajuste: si un componente domina el total (suma > 2× la suma de los
-    demás), su señal aplasta a los otros. Verificar en el print [REWARD BREAKDOWN].
+    Guía de ajuste: verificar [REWARD BREAKDOWN] en el print del episodio.
+    Si un componente acumula > 2× los demás, reducir su peso.
     """
 
-    # PESO_PROFIT: peso del componente principal de rentabilidad.
+    # PESO_PROFIT: expectancy real del episodio.
     # Fórmula: tanh(expectancy / (balance * 0.01))
-    #   donde expectancy = (accuracy × avg_win) - ((1-accuracy) × avg_loss)
-    #   calculada con los trades reales del episodio actual.
-    # Es el componente más importante — define si el agente aprende a ser rentable
-    # en términos de expectancy real, no solo de cuántas veces gana.
-    # Si avg_loss > avg_win aunque la accuracy sea >50%, el reward es negativo →
-    # señal correcta para que el agente aprenda a cortar pérdidas.
-    # No bajar de 0.8. Si este componente es muy débil, los otros toman el control
-    # y el agente optimiza para consistencia o bajo drawdown sin ser rentable.
+    #   expectancy = (accuracy × avg_win) - ((1-accuracy) × avg_loss)
+    # Si avg_loss > avg_win → negativo aunque accuracy > 50%. Señal correcta.
+    # Es el componente más importante. No bajar de 0.8.
     PESO_PROFIT = 1.0
 
-    # PESO_SHARPE: peso del Sharpe ratio rolling sobre los últimos 50 trades cerrados.
-    # Incentiva que el agente no solo gane, sino que gane de forma consistente
-    # en relación al riesgo tomado. Un agente con alta accuracy pero muy volátil
-    # en P&L recibirá Sharpe bajo.
-    # Con 0.3 contribuye ~20-30% del reward total en episodios estables.
+    # PESO_SHARPE: rolling Sharpe sobre últimos 50 trades cerrados.
+    # Incentiva ganancias consistentes en relación al riesgo.
+    # Mínimo 15 trades para activarse (v2, antes 10).
     PESO_SHARPE = 0.3
 
-    # PESO_DRAWDOWN: peso de la penalización por drawdown del episodio.
-    # Fórmula: penaliza cuando (peak_equity - current_equity) / peak_equity > 5%.
-    # En fold 3 con 2500 trades y drawdown persistente >5%, este componente
-    # acumulaba entre -3 y -106 por episodio, siendo el más destructivo en los
-    # peores episodios (ep 26, 31, 36, 37, 40).
-    # Aumentar (ej. 0.5) hace al agente más conservador → puede reducir trades
-    # y cerrar posiciones perdedoras antes, pero también puede volverse demasiado
-    # reticente a operar durante tendencias normales.
-    # Bajar (ej. 0.1) reduce la presión para gestionar el riesgo → el agente
-    # puede aceptar drawdowns grandes si el P&L neto es positivo.
+    # PESO_DRAWDOWN: penaliza el INCREMENTO de drawdown entre cierres de trades.
+    # v2: ya NO acumula cuando el drawdown es persistente. Solo penaliza cuando
+    # el drawdown empeora en un cierre. Elimina el problema de acumulación de v1
+    # que llegaba a -106 por episodio en fold 3.
     PESO_DRAWDOWN = 0.3
 
-    # PESO_CONSISTENCY: peso del coeficiente de variación de retornos.
-    # Penaliza alta volatilidad relativa a la media de retornos.
-    # Con 0.2 tiene efecto menor. Si se sube (ej. 0.5) el agente podría aprender
-    # a hacer muchos trades pequeños y estables en lugar de pocos trades grandes.
-    # Para GOLD M15 intraday, cierta volatilidad es inevitable — no subir de 0.3.
-    PESO_CONSISTENCY = 0.2
+    # PESO_CONSISTENCY: coeficiente de variación de retornos.
+    # Reducido de 0.2 a 0.1 — señal secundaria, no debe dominar.
+    PESO_CONSISTENCY = 0.1
 
-    # PESO_RISK_ADJUSTED: peso del ratio profit/volatilidad.
-    # Fórmula: tanh(profit_dollars / (std_returns × balance))
-    # Complementa a PESO_PROFIT incentivando ganancias con bajo riesgo relativo.
-    # En fold 3 fue uno de los dos componentes que guió el aprendizaje real
-    # (junto con trade_quality) porque PESO_PROFIT estaba bloqueado por el bug 50/50.
-    # Mantener en 0.3.
-    PESO_RISK_ADJUSTED = 0.3
+    # PESO_RISK_ADJUSTED: en v2 = loss_severity.
+    # Penaliza cuando un loser específico es peor que el promedio histórico del buffer.
+    # PROBLEMA DETECTADO (2026-04-08 ep1-8): con ~1500 losses por episodio, exactamente
+    # ~50% son peores que la media del buffer por definición estadística → ~750 trades
+    # × penalización fija ≈ -100 constante en TODOS los episodios. No discrimina entre
+    # un episodio de -133 pips y uno de -548 pips. Ruido, no señal.
+    # Reducido de 0.5 a 0.02 para que el total sea ~-4 en lugar de ~-100.
+    # Mantiene la presión direccional correcta pero no domina el reward total.
+    PESO_RISK_ADJUSTED = 0.02
 
-    # PESO_MOMENTUM: peso del momentum de equity (tendencia de los últimos 3 trades).
-    # Incentiva que el agente opere cuando el equity está en tendencia positiva.
-    # Señal muy ruidosa — 0.15 es suficiente para que tenga efecto sin distorsionar.
-    # No subir de 0.2 porque el momentum de 3 trades es estadísticamente poco robusto.
-    PESO_MOMENTUM = 0.15
+    # PESO_MOMENTUM: en v2 = win_retention.
+    # Premia cuando un winner supera el promedio histórico del buffer.
+    # PROBLEMA DETECTADO (2026-04-08 ep1-8): mismo problema que loss_severity en positivo.
+    # ~50% de winners superan el buffer promedio → +37 constante en todos los episodios,
+    # independiente del P&L real. Da señal positiva mientras el agente pierde -400 pips.
+    # Reducido de 0.2 a 0.02 para que el total sea ~+0.75 en lugar de ~+37.
+    PESO_MOMENTUM = 0.02
 
-    # PESO_TRADE_QUALITY: peso de la calidad relativa del trade respecto al promedio reciente.
-    # ADVERTENCIA: la fórmula actual tiene un problema de escala — el denominador
-    # (avg_recent × balance) usa avg_recent del returns_buffer que está en escala
-    # profit/balance (~0.0003), haciendo que el tanh sature en ±0.95 en casi todos los trades.
-    # Por eso está reducido a 0.03. Con peso original (0.25) dominaba el total dando
-    # reward positivo incluso con equity negativo.
-    # NO subir hasta reformular _calculate_trade_quality_reward para usar magnitudes
-    # reales de avg_win/avg_loss en dólares en lugar del returns_buffer normalizado.
-    PESO_TRADE_QUALITY = 0.03
+    # PESO_TRADE_QUALITY: delta del ratio avg_win/avg_loss entre trades consecutivos.
+    # v2.1: usa delta, no ratio absoluto. Ratio estable → ~0 (verificado: +0.05 a +2.65
+    # en eps 1-8, correcto). Solo dispara cuando el ratio cambia.
+    # 0.3 funciona bien — no acumula, no domina.
+    PESO_TRADE_QUALITY = 0.3
 
-    # RISK_FREE_RATE: tasa libre de riesgo anual para el cálculo del Sharpe.
-    # Se convierte a tasa diaria internamente (/ 252).
-    # 0.02 = 2% anual. No tiene impacto significativo en el entrenamiento.
+    # RISK_FREE_RATE: tasa libre de riesgo anual para el Sharpe (/ 252 = diaria).
     RISK_FREE_RATE = 0.02
-
-    # REWARD_NOISE_STD: desviación estándar del ruido gaussiano añadido al reward.
-    # Con 2500 trades/episodio, el ruido acumulado tiene media ≈ 0 (se cancela).
-    # Tiene efecto mínimo estadísticamente pero complica el debugging de rewards.
-    # Poner 0.0 para análisis limpio; 0.01 para producción.
-    REWARD_NOISE_STD = 0.01
 
     @staticmethod
     def get_pesos():
-        """Retorna diccionario de pesos"""
+        """Retorna diccionario de pesos para AdvancedRewardSystem."""
         return {
-            'profit': ConfigReward.PESO_PROFIT,
-            'sharpe': ConfigReward.PESO_SHARPE,
-            'drawdown': ConfigReward.PESO_DRAWDOWN,
-            'consistency': ConfigReward.PESO_CONSISTENCY,
+            'profit':        ConfigReward.PESO_PROFIT,
+            'sharpe':        ConfigReward.PESO_SHARPE,
+            'drawdown':      ConfigReward.PESO_DRAWDOWN,
+            'consistency':   ConfigReward.PESO_CONSISTENCY,
             'risk_adjusted': ConfigReward.PESO_RISK_ADJUSTED,
-            'momentum': ConfigReward.PESO_MOMENTUM,
-            'trade_quality': ConfigReward.PESO_TRADE_QUALITY
+            'momentum':      ConfigReward.PESO_MOMENTUM,
+            'trade_quality': ConfigReward.PESO_TRADE_QUALITY,
         }
 
 

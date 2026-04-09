@@ -377,17 +377,15 @@ def main():
             best_low =9999999
             best_high = 0
             
-            trader.rewards_history.clear()
-            trader.rewards_history_episode.clear()
-            
             reward_system.sumaRecompensaProfit = 0
             reward_system.sumaRecompensaSharpe = 0
             reward_system.sumaRecompensaDrawndown = 0
-            reward_system.sumaRecompensaConsistency =0
+            reward_system.sumaRecompensaConsistency = 0
             reward_system.sumaRecompensaRiskAdjusted = 0
             reward_system.sumaRecompensaMomentum = 0
             reward_system.sumaRecompensaTradeQuality = 0
             reward_system.reset_episode()  # Limpia buffers para que el reward vea solo este episodio
+            steps_in_position = 0  # Contador de steps con posición abierta (para step reward)
             
             #trader.total_rewards = 0
             
@@ -431,6 +429,7 @@ def main():
                 # Si la accion de la ia es igua a 1 compra
                 if action == 1 and not trader.inventory:  # Comprar
                     trader.inventory.append(buy_price)
+                    steps_in_position = 0
                     #reward += 0.01 if t < len(alcista_values) and alcista_values[t] > 0 else -0.01
                     if episode == episodes and fold == n_folds - 1:
                         buy_points.append((timestamp, buy_price))
@@ -485,12 +484,14 @@ def main():
                     if episode == episodes and fold == n_folds - 1:
                         sell_points.append((timestamp, sell_price))
 
-                    # Reset best values
+                    # Reset best values y contador de steps
                     best_low = 9999999.0
                     best_high = 0.0
+                    steps_in_position = 0
 
                 elif action == 3 and len(trader.inventory_sell) <= 0:  # Venta en corto
                     trader.inventory_sell.append(sell_price)
+                    steps_in_position = 0
                     #reward += 0.01 if t < len(alcista_values) and alcista_values[t] < 0 else -0.01
                     if episode == episodes and fold == n_folds - 1:
                         sell_points.append((timestamp, sell_price))
@@ -543,6 +544,7 @@ def main():
 
                     best_low = 9999999.0
                     best_high = 0.0
+                    steps_in_position = 0
 
                 elif (len(trader.inventory) > 0 or len(trader.inventory_sell) > 0) and has_time and \
                      t < len(hora_int_pre) and hora_int_pre[t] == 23:
@@ -601,21 +603,25 @@ def main():
 
                     if episode == episodes and fold == n_folds - 1:
                         sell_points.append((timestamp, sell_price))
-                
-                                    
+                    steps_in_position = 0
+
                 drawdown = (peak_equity - current_equity) / peak_equity if peak_equity != 0 else 0
                 drawdown_history_episode.append(drawdown)
 
                 
-                # Step reward: pequeña señal de P&L no realizado para reducir esparsidad.
-                # Enseña al agente a mantener ganadores y cortar perdedores.
+                # Step reward: señal de P&L no realizado mientras hay posición abierta.
+                # La penalización en pérdida crece con el tiempo en posición (ver get_step_reward).
                 if reward == 0:
                     if len(trader.inventory) > 0:
                         upnl = (current_price - trader.inventory[0]) * pip_value_eur_usd
-                        reward += float(np.tanh(upnl / (balance_first * 0.02))) * 0.01
+                        reward += reward_system.get_step_reward(upnl, steps_in_position, balance_first)
+                        steps_in_position += 1
                     elif len(trader.inventory_sell) > 0:
                         upnl = (trader.inventory_sell[0] - current_price) * pip_value_eur_usd
-                        reward += float(np.tanh(upnl / (balance_first * 0.02))) * 0.01
+                        reward += reward_system.get_step_reward(upnl, steps_in_position, balance_first)
+                        steps_in_position += 1
+                    else:
+                        steps_in_position = 0
 
                 # next_state incluye posición ACTUALIZADA tras la acción de este paso
                 next_t = min(t + 1, len(all_states) - 1)

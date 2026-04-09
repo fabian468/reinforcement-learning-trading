@@ -146,6 +146,62 @@ Models and plots are saved to `resultados_cv/`:
 
 ## Historial de cambios
 
+### 2026-04-08
+
+**Fix pesos loss_severity y win_retention — acumulación constante (`parametros.py`)**
+
+Problema detectado en eps 1-8: `Riesgo ajustado` estancado en -98 a -103 y `Momentum` en +36 a +38 en TODOS los episodios, independiente de si el P&L fue -133 o -548. Ruido constante, no señal.
+Causa: ~50% de los losses son estadísticamente peores que la media del buffer → ~750 trades × penalización fija = -100 siempre.
+- `PESO_RISK_ADJUSTED`: 0.5 → **0.02** (contribución: ~-100 → ~-3 por episodio)
+- `PESO_MOMENTUM`: 0.2 → **0.02** (contribución: ~+37 → ~+2.5 por episodio)
+Resultado simulado: ep1 equiv (-369 pips) → -219, ep7 equiv (-133 pips) → -81, rentable (+200 pips) → +541. Total correctamente correlacionado con P&L real.
+
+---
+
+**AdvancedRewardSystem v2.1 — fix acumulación falsa positiva (`AdvancedRewardSystem.py`)**
+
+Problema detectado en ep 7 fold 1: reward total +13.68 con P&L -106 pips. Reward positivo con agente perdiendo dinero.
+- `trade_quality` (+66.37): ratio avg_win/avg_loss = 1.05 → tanh(0.10) × 2902 trades = acumulación masiva con señal casi neutra
+- `loss_severity` (+34.02): premiaba losers "mejores que el promedio", lo que ocurre en ~50% de todas las pérdidas por definición estadística
+
+**Correcciones:**
+- `_calc_trade_quality`: cambiado de ratio absoluto a DELTA del ratio entre trades consecutivos. Ratio estable → ~0. Solo dispara cuando el ratio mejora o empeora. Trade Quality: +66.37 → +0.98 en simulación equivalente.
+- `_calc_loss_severity`: eliminado caso positivo. Si el loser es mejor o igual al promedio → 0. Solo penaliza cuando el loser supera el promedio histórico.
+- `_calc_win_retention`: eliminado caso negativo. Si el winner es menor o igual al promedio → 0. Solo premia cuando el winner supera el promedio histórico.
+- `_prev_ratio = 1.0` añadido a `__init__` y `reset_episode()`.
+
+Resultado validado: simulación equivalente al ep 7 da total **-253** (negativo) con P&L negativo. Señal ahora alineada con rentabilidad real.
+
+---
+
+**Reescritura completa de AdvancedRewardSystem v2.0 (`AdvancedRewardSystem.py`, `parametros.py`, `run_con_per.py`)**
+
+Problema raíz: el agente obtenía recompensa pero no ganaba dinero — el sistema de reward no estaba alineado con la rentabilidad real.
+
+**`AdvancedRewardSystem.py` — reescrito desde cero:**
+- `trade_quality` reformulado: ratio `avg_win / avg_loss` real en dólares. Antes usaba `avg_recent` del `returns_buffer` normalizado (~0.0003) como denominador → saturaba en ±0.95 en todos los trades. Ahora: `tanh((ratio - 1) * 2)`, ratio 2:1 → +0.96, ratio 1:2 → -0.96.
+- `drawdown` corregido: ya no acumula penalización por nivel absoluto. Ahora penaliza solo el **incremento** (delta) de drawdown entre cierres de trades. Con DD persistente, no acumula. Elimina el problema de fold 3 donde llegaba a -106 por episodio.
+- `loss_severity` (nuevo, mapea a `sumaRecompensaRiskAdjusted`): penaliza cuando un loser específico es peor que el `avg_loss` histórico del buffer. Señal directa contra "dejar correr los losers". Peso 0.5.
+- `win_retention` (nuevo, mapea a `sumaRecompensaMomentum`): premia cuando un winner supera el `avg_win` histórico. Señal directa contra "cortar winners antes de tiempo". Peso 0.2.
+- `get_step_reward(upnl, steps_in_position, balance)`: nuevo método para step reward. Penalización en pérdida crece hasta 2× con `steps_in_position` (máx en 200 steps). Presiona al agente a cerrar losers en lugar de esperar reversión.
+- Ruido gaussiano eliminado (`add_noise` ignorado en v2). NoisyLinear ya provee exploración.
+- Sharpe: mínimo 15 trades para activarse (antes 10).
+- Backup guardado como `AdvancedRewardSystem_backup_20260408.py`.
+
+**`parametros.py` — `ConfigReward` actualizada:**
+- `PESO_RISK_ADJUSTED`: 0.3 → 0.5 (ahora es `loss_severity`, componente crítico)
+- `PESO_MOMENTUM`: 0.15 → 0.2 (ahora es `win_retention`)
+- `PESO_TRADE_QUALITY`: 0.03 → 0.3 (ya no satura, fórmula corregida)
+- `PESO_CONSISTENCY`: 0.2 → 0.1 (señal secundaria, reducida)
+- `REWARD_NOISE_STD`: eliminado (ruido removido del sistema)
+- Comentarios actualizados para reflejar v2.
+
+**`run_con_per.py` — step reward con contador de tiempo:**
+- `steps_in_position = 0` inicializado al inicio de cada episodio.
+- Se resetea a 0 al abrir un trade (action 1 y action 3) y al cerrar (action 2, action 4, force-close hora 23).
+- Se incrementa en cada step con posición abierta.
+- Step reward reemplazado por `reward_system.get_step_reward(upnl, steps_in_position, balance_first)`.
+
 > **INSTRUCCIÓN PARA CLAUDE:** Cada vez que se realice un cambio en el código, debe agregarse una entrada en esta sección con fecha, archivo(s) modificado(s) y descripción del cambio. Esto es obligatorio, no opcional.
 
 ### 2026-03-31
