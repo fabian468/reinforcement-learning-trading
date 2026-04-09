@@ -382,7 +382,7 @@ class ConfigEntrenamiento:
     # ep 16 de fold 3, ep 8 de fold 4 — la convergencia acelera entre folds.
     # Recomendado: 100-150 para dar tiempo de consolidación post-breakthrough.
     # Cada episodio en fold de ~14k velas M15 tarda ~X minutos (medir con cProfile).
-    EPISODES = 300
+    EPISODES = 500
 
     # N_FOLDS: número de folds en la validación cruzada walk-forward.
     # Cada fold es una porción cronológica del 80% de datos de entrenamiento.
